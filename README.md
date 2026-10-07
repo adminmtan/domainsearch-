@@ -12,37 +12,43 @@
 - API Key 仅存浏览器 localStorage，不上传服务器
 - 单页静态前端 + Flask 后端，零数据库
 
-## 安装
+## 安装与启动
 
-要求 Python 3.10+。
+要求 Python 3.10+。**强烈推荐使用项目自带的虚拟环境**（避免 macOS 13+ 的 PEP 668 externally-managed 报错）。
 
-macOS / Linux（推荐使用 `python3` / `pip3`）：
+### 方法一：一键启动（推荐）
 
 ```bash
-python3 -m pip install -r requirements.txt
+cd /Users/mtan/Documents/01_Projects/P_yuming
+./run.sh
 ```
 
-或（如果你的环境已配置 `pip`）：
+脚本会自动：
+1. 在项目根目录创建 `.venv/` 虚拟环境
+2. 安装/更新 `requirements.txt` 里的依赖
+3. 启动 Flask，访问 `http://127.0.0.1:5000/`
+
+### 方法二：手动 venv
 
 ```bash
-pip install -r requirements.txt
-```
-
-> macOS 上常见 `pip: command not found`，这是因为系统默认未安装 `pip`。用 `python3 -m pip ...` 即可绕过。如果你只有 Homebrew Python：`brew install python` 即可同时获得 `python3` 和 `pip3`。
-
-## 启动
-
-```bash
-python3 app.py
-```
-
-如果 `python` 命令在你的 shell 里指向 Python 3，也可以用：
-
-```bash
+cd /Users/mtan/Documents/01_Projects/P_yuming
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip
+python -m pip install -r requirements.txt
 python app.py
 ```
 
-浏览器访问 [http://127.0.0.1:5000/](http://127.0.0.1:5000/)
+### 方法三：Homebrew Python 全局安装（不推荐）
+
+如果你确定要装到系统 Python（**会污染 Homebrew Python**，不推荐）：
+
+```bash
+python3 -m pip install -r requirements.txt --break-system-packages
+python3 app.py
+```
+
+> 为什么不用 `pip install` 直接装？macOS 13+ / Homebrew Python 3.12+ 默认开启 PEP 668 保护，会报 `error: externally-managed-environment`。venv 是官方推荐的绕开方式。
 
 ## 使用步骤
 
