@@ -11,7 +11,7 @@ from openai import AuthenticationError as OpenAIAuthenticationError
 from openai import APIConnectionError as OpenAIAPIConnectionError
 
 from generator import OpenAIGenerator
-from checker import check_domains
+from checker import check_domains, check_domains_with_errors
 
 app = Flask(__name__, static_folder="static", static_url_path="/static")
 
@@ -324,24 +324,33 @@ def api_generate_stream():
                     "phase": "dmcheck",
                     "n": batch_no,
                     "api": {
-                        "name": "dmcheck.app availability",
-                        "url": "https://dmcheck.app/api/check",
+                        "name": "dmcheck.app whois",
+                        "url": "https://dmcheck.app/api/whois/<domain>",
                         "method": "GET",
                         "params": {
-                            "domains": ",".join(full_domains),
+                            "domains": full_domains,
                             "count": len(full_domains),
+                            "concurrency": 8,
                         },
-                        "timeout_s": 5.0,
+                        "timeout_s_per_req": 5.0,
                     },
                 })
                 dmcheck_t0 = time.time()
-                statuses = check_domains(full_domains, tlds, timeout=5.0)
+                statuses, errors = check_domains_with_errors(
+                    full_domains, tlds, timeout=5.0
+                )
                 dmcheck_took = round((time.time() - dmcheck_t0) * 1000, 1)
-                # 给前端看每个候选的状态
-                domain_status_list = [
-                    {"domain": d, "status": statuses.get(d, "unknown")}
-                    for d in full_domains
-                ]
+                # 给前端看每个候选的状态 + 错误原因
+                domain_status_list = []
+                for d in full_domains:
+                    item = {
+                        "domain": d,
+                        "status": statuses.get(d, "unknown"),
+                    }
+                    err = errors.get(d)
+                    if err:
+                        item["error"] = err
+                    domain_status_list.append(item)
                 yield _sse("api_result", {
                     "phase": "dmcheck",
                     "n": batch_no,

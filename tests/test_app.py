@@ -292,8 +292,10 @@ def test_stream_stops_when_count_reached(monkeypatch):
 
     monkeypatch.setattr("app.OpenAIGenerator", lambda **kw: _G())
     monkeypatch.setattr(
-        "app.check_domains",
-        lambda domains, tlds, timeout: {d: "available" for d in domains},
+        "app.check_domains_with_errors",
+        lambda domains, tlds, timeout: (
+            {d: "available" for d in domains}, {}
+        ),
     )
     client = app.test_client()
     resp = client.post("/api/generate-stream", json={
@@ -329,10 +331,10 @@ def test_stream_retries_when_no_available(monkeypatch):
                 result[d] = "registered"
             else:
                 result[d] = "available"
-        return result
+        return result, {}  # (statuses, errors) — dmcheck 流式 mock 形状
 
     monkeypatch.setattr("app.OpenAIGenerator", lambda **kw: _G())
-    monkeypatch.setattr("app.check_domains", fake_check)
+    monkeypatch.setattr("app.check_domains_with_errors", fake_check)
     client = app.test_client()
     resp = client.post("/api/generate-stream", json={
         "description": "x", "min_len": 4, "max_len": 10,
@@ -380,8 +382,10 @@ def test_stream_emits_log_events_in_order(monkeypatch):
             return [{"domain": "alpha", "reason": "r"}]
     monkeypatch.setattr("app.OpenAIGenerator", lambda **kw: _G())
     monkeypatch.setattr(
-        "app.check_domains",
-        lambda domains, tlds, timeout: {d: "available" for d in domains},
+        "app.check_domains_with_errors",
+        lambda domains, tlds, timeout: (
+            {d: "available" for d in domains}, {}
+        ),
     )
     client = app.test_client()
     resp = client.post("/api/generate-stream", json={
@@ -422,8 +426,8 @@ def test_stream_dedupes_candidates_across_batches(monkeypatch):
                 out[d] = "registered"
             else:
                 out[d] = "available"
-        return out
-    monkeypatch.setattr("app.check_domains", fake_check)
+        return out, {}  # (statuses, errors)
+    monkeypatch.setattr("app.check_domains_with_errors", fake_check)
     client = app.test_client()
     resp = client.post("/api/generate-stream", json={
         "description": "x", "min_len": 4, "max_len": 10,
@@ -448,8 +452,10 @@ def test_stream_api_call_includes_url_and_model(monkeypatch):
             return [{"domain": "alpha", "reason": "r"}]
     monkeypatch.setattr("app.OpenAIGenerator", lambda **kw: _G())
     monkeypatch.setattr(
-        "app.check_domains",
-        lambda domains, tlds, timeout: {d: "available" for d in domains},
+        "app.check_domains_with_errors",
+        lambda domains, tlds, timeout: (
+            {d: "available" for d in domains}, {}
+        ),
     )
     client = app.test_client()
     resp = client.post("/api/generate-stream", json={
@@ -464,8 +470,8 @@ def test_stream_api_call_includes_url_and_model(monkeypatch):
     batch_starts = [d for t, d in events if t == "batch_start"]
     assert batch_starts[0]["api"]["url"] == "https://my-proxy.example.com/v1/chat/completions"
     assert batch_starts[0]["api"]["model"] == "gpt-4o"
-    # dmcheck api_call
-    assert api_calls[0]["api"]["url"] == "https://dmcheck.app/api/check"
+    # dmcheck api_call (新版用 whois 端点)
+    assert api_calls[0]["api"]["url"] == "https://dmcheck.app/api/whois/<domain>"
     assert api_calls[0]["api"]["method"] == "GET"
     assert "domains" in api_calls[0]["api"]["params"]
 
@@ -491,13 +497,16 @@ def test_stream_api_result_includes_per_domain_status(monkeypatch):
             ]
     monkeypatch.setattr("app.OpenAIGenerator", lambda **kw: _G())
     monkeypatch.setattr(
-        "app.check_domains",
-        lambda domains, tlds, timeout: {
-            d: (
-                "available" if ("alpha" in d or "gamma" in d) else "registered"
-            )
-            for d in domains
-        },
+        "app.check_domains_with_errors",
+        lambda domains, tlds, timeout: (
+            {
+                d: (
+                    "available" if ("alpha" in d or "gamma" in d) else "registered"
+                )
+                for d in domains
+            },
+            {},
+        ),
     )
     client = app.test_client()
     resp = client.post("/api/generate-stream", json={

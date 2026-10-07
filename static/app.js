@@ -270,9 +270,17 @@ async function generate() {
     if (!items || !items.length) return;
     const indent = "    ";  // 4 空格的视觉缩进
     for (const it of items) {
-      const dot = it.status === "available" ? "✓" : "✗";
-      const cls = it.status === "available" ? "info" : "warn";
-      logLine(`${indent}${dot} ${it.domain}  [${it.status}]`, cls);
+      let dot, cls;
+      if (it.status === "available") {
+        dot = "✓"; cls = "info";
+      } else if (it.status === "registered") {
+        dot = "✗"; cls = "warn";
+      } else {
+        // unknown / reserved / anything else
+        dot = "?"; cls = "error";
+      }
+      const tail = it.error ? `  (${it.error})` : "";
+      logLine(`${indent}${dot} ${it.domain}  [${it.status}]${tail}`, cls);
     }
   }
 
