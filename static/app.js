@@ -149,11 +149,11 @@ async function generate() {
       setStatus(data.error || "生成失败", "error");
       return;
     }
-    renderResults(data.domains, data.stats);
+    renderResults(data.domains, data.stats, data.warning);
     const found = data.domains.length;
     const requested = data.stats.requested || count;
     if (found < requested) {
-      setStatus(`已找到 ${found} 个可注册域名（请求 ${requested} 个）`, "success");
+      setStatus(`已找到 ${found} 个可注册域名（请求 ${requested} 个）。${data.warning || ""}`, "success");
     } else {
       setStatus(`已生成 ${found} 个可注册域名`, "success");
     }

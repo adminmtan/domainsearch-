@@ -90,7 +90,7 @@ def api_generate():
     # Trim to requested count
     available = available[:count]
 
-    return jsonify({
+    response = {
         "success": True,
         "domains": available,
         "stats": {
@@ -99,7 +99,15 @@ def api_generate():
             "registered": len(full_domains) - len(available),
             "requested": count,
         },
-    })
+    }
+
+    if len(available) < count:
+        response["warning"] = (
+            f"仅生成 {len(available)} 个可注册域名（请求 {count} 个）。"
+            f"可尝试增加 TLD 选项、放宽长度范围或调整措辞。"
+        )
+
+    return jsonify(response)
 
 
 if __name__ == "__main__":
