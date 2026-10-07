@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>智能域名生成器</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <header>
+    <h1>智能域名生成器</h1>
+    <button id="settings-btn" aria-label="设置">⚙ 设置</button>
+  </header>
+
+  <main>
+    <section class="form-section">
+      <label for="description">描述内容</label>
+      <textarea id="description" rows="4" maxlength="2000"
+                placeholder="例如：一个面向开发者的 AI 工具平台，专注于代码生成与自动化"></textarea>
+
+      <label>TLD 后缀</label>
+      <div id="tld-list" class="tld-list"></div>
+
+      <div class="config-row">
+        <label>最小长度 <input type="number" id="min-len" value="4" min="2" max="20"></label>
+        <label>最大长度 <input type="number" id="max-len" value="12" min="2" max="20"></label>
+        <label>输出数量 <input type="number" id="count" value="10" min="1" max="50"></label>
+      </div>
+
+      <button id="generate-btn" class="primary">生成域名</button>
+      <div id="status" class="status"></div>
+    </section>
+
+    <section id="results" class="results-section"></section>
+  </main>
+
+  <div id="settings-modal" class="modal hidden" role="dialog" aria-modal="true">
+    <div class="modal-content">
+      <h2>设置</h2>
+      <label>OpenAI API Key
+        <input type="password" id="api-key" placeholder="sk-...">
+      </label>
+      <label>Base URL
+        <input type="text" id="base-url" value="https://api.openai.com/v1">
+      </label>
+      <label>Model
+        <input type="text" id="model" value="gpt-4o-mini">
+      </label>
+      <div class="modal-actions">
+        <button id="settings-cancel">取消</button>
+        <button id="settings-save" class="primary">保存</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>
