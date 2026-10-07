@@ -53,6 +53,21 @@ function saveConfig() {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(cfg));
 }
 
+/**
+ * 输入变化即持久化（用户上一版反馈"AI 设置未保存在本地，禁止每次去设置"）。
+ * 实现策略：
+ *   1) input 失焦 / change 时自动写
+ *   2) 关闭 modal 任何路径都写（hook 唯一出口 hideSettings）
+ *   3) 即使用户忘了点保存按钮，下一次刷新配置仍在
+ */
+function bindAutoSave() {
+  [$apiKey, $baseUrl, $model].forEach(($el) => {
+    if (!$el) return;
+    $el.addEventListener("change", () => saveConfig());
+    $el.addEventListener("blur", () => saveConfig());
+  });
+}
+
 function getConfig() {
   return {
     api_key: $apiKey.value.trim(),
@@ -223,6 +238,44 @@ async function generate() {
   let finalStats = null;
   let shouldStop = false;
 
+  /**
+   * 把 API 元数据格式化为单行可读文本。
+   * 例：POST https://api.openai.com/v1/chat/completions · model=gpt-4o-mini · n=10
+   */
+  function formatApi(api) {
+    if (!api) return "";
+    const parts = [];
+    if (api.method) parts.push(api.method);
+    if (api.url) parts.push(api.url);
+    const tail = [];
+    if (api.model) tail.push(`model=${api.model}`);
+    if (api.params) {
+      for (const [k, v] of Object.entries(api.params)) {
+        if (v === null || v === undefined) continue;
+        // 大段文本截断
+        const sv = typeof v === "string" && v.length > 60 ? v.slice(0, 60) + "…" : v;
+        tail.push(`${k}=${sv}`);
+      }
+    }
+    if (api.timeout_s) tail.push(`timeout=${api.timeout_s}s`);
+    const main = parts.join(" ");
+    return main + (tail.length ? " · " + tail.join(" · ") : "");
+  }
+
+  /**
+   * 渲染多行日志：一行总览 + N 行域名明细
+   */
+  function logBlock(header, items, opts = {}) {
+    logLine(header, opts.level || "info");
+    if (!items || !items.length) return;
+    const indent = "    ";  // 4 空格的视觉缩进
+    for (const it of items) {
+      const dot = it.status === "available" ? "✓" : "✗";
+      const cls = it.status === "available" ? "info" : "warn";
+      logLine(`${indent}${dot} ${it.domain}  [${it.status}]`, cls);
+    }
+  }
+
   function handleEvent(eventName, dataObj) {
     switch (eventName) {
       case "start":
@@ -230,23 +283,48 @@ async function generate() {
         logLine(`任务 ${currentJobId} 启动（请求 ${dataObj.requested} 个）`, "info");
         break;
       case "batch_start":
-        logLine(`批次 ${dataObj.n}：调用 OpenAI…`, "info");
-        break;
-      case "batch_check":
-        logLine(`批次 ${dataObj.n}：生成 ${dataObj.generated} 个候选，去重后 ${dataObj.fresh} 个，待查 ${dataObj.to_check} 个`, "info");
-        break;
-      case "batch_done":
         logLine(
-          `批次 ${dataObj.n} 完成：本批可注册 ${dataObj.available_this_batch} 个，累计 ${dataObj.total_available}/${count}（${dataObj.elapsed}s）`,
-          dataObj.available_this_batch > 0 ? "info" : "warn"
+          `批次 ${dataObj.n}：调用 OpenAI…\n      └ ${formatApi(dataObj.api)}`,
+          "info"
         );
         break;
+      case "api_call":
+        logLine(
+          `批次 ${dataObj.n}：${dataObj.phase} API 调用\n      └ ${formatApi(dataObj.api)}`,
+          "info"
+        );
+        break;
+      case "api_result": {
+        const s = dataObj.summary || {};
+        const head = dataObj.phase === "dmcheck"
+          ? `批次 ${dataObj.n}：dmcheck 返回（${dataObj.took_ms}ms）— 可注册 ${s.available} / 已注册 ${s.registered} / 其他 ${s.other}`
+          : `批次 ${dataObj.n}：${dataObj.phase} 返回（${dataObj.took_ms}ms）`;
+        logBlock(head, dataObj.items);
+        break;
+      }
+      case "batch_check":
+        // 旧事件名保留兼容（虽然新版后端用 api_call/api_result）
+        logLine(`批次 ${dataObj.n}：生成 ${dataObj.generated} 个候选，去重后 ${dataObj.fresh} 个，待查 ${dataObj.to_check} 个`, "info");
+        break;
+      case "batch_done": {
+        const head = `批次 ${dataObj.n} 完成：本批可注册 ${dataObj.available_this_batch} 个，累计 ${dataObj.total_available}/${count}（${dataObj.elapsed}s）`;
+        if (dataObj.available_domains && dataObj.available_domains.length) {
+          const items = dataObj.available_domains.map((d) => ({ domain: d, status: "available" }));
+          logBlock(head, items, { level: dataObj.available_this_batch > 0 ? "info" : "warn" });
+        } else {
+          logLine(head, dataObj.available_this_batch > 0 ? "info" : "warn");
+        }
+        break;
+      }
       case "stopped":
         logLine(`已停止（用户中止）：累计 ${dataObj.available} 个可注册（${dataObj.elapsed}s）`, "warn");
         shouldStop = true;
         break;
       case "error":
         logLine("错误：" + dataObj.msg, "error");
+        if (dataObj.api) {
+          logLine("      └ 失败接口：" + formatApi(dataObj.api), "error");
+        }
         break;
       case "done":
         finalDomains = dataObj.domains || [];
@@ -382,6 +460,11 @@ function openSettings() {
   $testResult.className = "test-result";
 }
 function hideSettings() {
+  // 关闭 modal 是"提交"语义：自动保存当前输入。
+  // 用户上一版反馈"AI 设置未保存在本地，禁止每次去设置"——根因是
+  // 改完 input 直接点 modal 外部 / 取消，没走"保存"按钮。
+  // 这里把 hideSettings 变成唯一关闭入口并自带 save。
+  saveConfig();
   $settingsModal.classList.add("hidden");
   $settingsModal.classList.remove("open");
 }
@@ -437,6 +520,7 @@ function init() {
       hideSettings();
       setStatus("设置已保存", "success");
     });
+    bindAutoSave();
     $testConn.addEventListener("click", testConnection);
     $settingsModal.addEventListener("click", (e) => {
       if (e.target === $settingsModal) hideSettings();

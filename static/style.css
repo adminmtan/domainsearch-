@@ -211,6 +211,7 @@ button.link-btn:hover { color: #1f2328; text-decoration: underline; }
   border-bottom: 1px dashed #eaecef;
   padding: 2px 0;
   word-break: break-all;
+  white-space: pre-wrap;
 }
 .log-list li:last-child { border-bottom: none; }
 .log-list .log-time { color: #8c959f; margin-right: 6px; }

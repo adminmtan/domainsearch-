@@ -268,7 +268,21 @@ def api_generate_stream():
 
                 batch_no += 1
                 batch_t0 = time.time()
-                yield _sse("batch_start", {"n": batch_no, "ts": time.time()})
+                yield _sse("batch_start", {
+                    "n": batch_no,
+                    "ts": time.time(),
+                    "api": {
+                        "name": "openai chat.completions",
+                        "url": base_url.rstrip("/") + "/chat/completions",
+                        "model": model,
+                        "params": {
+                            "description_chars": len(description),
+                            "min_len": min_len,
+                            "max_len": max_len,
+                            "n": BATCH_SIZE,
+                        },
+                    },
+                })
 
                 try:
                     new_candidates = gen.generate(
@@ -278,6 +292,11 @@ def api_generate_stream():
                     yield _sse("error", {
                         "msg": f"批次 {batch_no} OpenAI 调用失败：{e}",
                         "batch": batch_no,
+                        "api": {
+                            "name": "openai chat.completions",
+                            "url": base_url.rstrip("/") + "/chat/completions",
+                            "model": model,
+                        },
                     })
                     # 失败不要立即退出；给用户看到错误，但继续下一批
                     # 避免单次抖动让任务死掉
@@ -301,11 +320,46 @@ def api_generate_stream():
                         full_domains.append(full)
                         full_to_cand[full] = cand
 
-                yield _sse("batch_check", {
+                yield _sse("api_call", {
+                    "phase": "dmcheck",
                     "n": batch_no,
-                    "generated": len(new_candidates),
-                    "fresh": len(fresh),
-                    "to_check": len(full_domains),
+                    "api": {
+                        "name": "dmcheck.app availability",
+                        "url": "https://dmcheck.app/api/check",
+                        "method": "GET",
+                        "params": {
+                            "domains": ",".join(full_domains),
+                            "count": len(full_domains),
+                        },
+                        "timeout_s": 5.0,
+                    },
+                })
+                dmcheck_t0 = time.time()
+                statuses = check_domains(full_domains, tlds, timeout=5.0)
+                dmcheck_took = round((time.time() - dmcheck_t0) * 1000, 1)
+                # 给前端看每个候选的状态
+                domain_status_list = [
+                    {"domain": d, "status": statuses.get(d, "unknown")}
+                    for d in full_domains
+                ]
+                yield _sse("api_result", {
+                    "phase": "dmcheck",
+                    "n": batch_no,
+                    "took_ms": dmcheck_took,
+                    "summary": {
+                        "checked": len(full_domains),
+                        "available": sum(
+                            1 for s in statuses.values() if s == "available"
+                        ),
+                        "registered": sum(
+                            1 for s in statuses.values() if s == "registered"
+                        ),
+                        "other": sum(
+                            1 for s in statuses.values()
+                            if s not in ("available", "registered")
+                        ),
+                    },
+                    "items": domain_status_list,
                 })
 
                 if not full_domains:
@@ -313,12 +367,13 @@ def api_generate_stream():
                         "n": batch_no,
                         "available_this_batch": 0,
                         "total_available": len(available),
+                        "available_domains": [],
                         "elapsed": round(time.time() - batch_t0, 2),
                     })
                     continue
 
-                statuses = check_domains(full_domains, tlds, timeout=5.0)
                 batch_available = 0
+                batch_available_domains: list[str] = []
                 for full, status in statuses.items():
                     if status != "available":
                         continue
@@ -330,6 +385,7 @@ def api_generate_stream():
                         "tld": full.split(".", 1)[1],
                         "status": "available",
                     })
+                    batch_available_domains.append(full)
                     batch_available += 1
                     if len(available) >= count:
                         break
@@ -338,6 +394,7 @@ def api_generate_stream():
                     "n": batch_no,
                     "available_this_batch": batch_available,
                     "total_available": len(available),
+                    "available_domains": batch_available_domains,
                     "elapsed": round(time.time() - batch_t0, 2),
                 })
 

@@ -373,7 +373,7 @@ def test_stop_endpoint_accepts_known_job(monkeypatch):
 
 
 def test_stream_emits_log_events_in_order(monkeypatch):
-    """验证事件顺序：start → batch_start → batch_check → batch_done → done。"""
+    """验证事件顺序：start → batch_start → api_call → api_result → batch_done → done。"""
     class _G:
         def __init__(self, *a, **kw): pass
         def generate(self, description, min_len, max_len, count):
@@ -393,7 +393,8 @@ def test_stream_emits_log_events_in_order(monkeypatch):
     # 顺序断言
     assert types[0] == "start"
     assert "batch_start" in types
-    assert "batch_check" in types
+    assert "api_call" in types
+    assert "api_result" in types
     assert "batch_done" in types
     assert types[-1] == "done"
 
@@ -429,12 +430,89 @@ def test_stream_dedupes_candidates_across_batches(monkeypatch):
         "tlds": ["com"], "count": 1, "api_key": "sk-test",
     })
     events = _parse_sse_events(resp.get_data(as_text=True))
-    batch_checks = [d for t, d in events if t == "batch_check"]
+    # 新事件流：用 api_result 验证每批实际查了什么
+    api_results = [d for t, d in events if t == "api_result"]
     # 至少 2 批
-    assert len(batch_checks) >= 2
-    # 第 1 批：fresh=1, to_check=1
-    assert batch_checks[0]["fresh"] == 1
-    assert batch_checks[0]["to_check"] == 1
-    # 第 2 批：fresh=1 (alpha 重复被去重，beta 是新的), to_check=1
-    assert batch_checks[1]["fresh"] == 1
-    assert batch_checks[1]["to_check"] == 1
+    assert len(api_results) >= 2
+    # 第 1 批：summary.checked == 1 (alpha 出现)
+    assert api_results[0]["summary"]["checked"] == 1
+    # 第 2 批：summary.checked == 1 (alpha 重复被去重，beta 是新的)
+    assert api_results[1]["summary"]["checked"] == 1
+
+
+def test_stream_api_call_includes_url_and_model(monkeypatch):
+    """用户要求日志体现接口/API：api_call 事件必须含 url 和 model。"""
+    class _G:
+        def __init__(self, *a, **kw): pass
+        def generate(self, description, min_len, max_len, count):
+            return [{"domain": "alpha", "reason": "r"}]
+    monkeypatch.setattr("app.OpenAIGenerator", lambda **kw: _G())
+    monkeypatch.setattr(
+        "app.check_domains",
+        lambda domains, tlds, timeout: {d: "available" for d in domains},
+    )
+    client = app.test_client()
+    resp = client.post("/api/generate-stream", json={
+        "description": "x", "min_len": 4, "max_len": 10,
+        "tlds": ["com"], "count": 1, "api_key": "sk-test",
+        "base_url": "https://my-proxy.example.com/v1",
+        "model": "gpt-4o",
+    })
+    events = _parse_sse_events(resp.get_data(as_text=True))
+    api_calls = [d for t, d in events if t == "api_call"]
+    # 第 1 个 api_call 应该是 dmcheck；先检查是否有 OpenAI 的 api 上下文
+    batch_starts = [d for t, d in events if t == "batch_start"]
+    assert batch_starts[0]["api"]["url"] == "https://my-proxy.example.com/v1/chat/completions"
+    assert batch_starts[0]["api"]["model"] == "gpt-4o"
+    # dmcheck api_call
+    assert api_calls[0]["api"]["url"] == "https://dmcheck.app/api/check"
+    assert api_calls[0]["api"]["method"] == "GET"
+    assert "domains" in api_calls[0]["api"]["params"]
+
+
+def test_stream_api_result_includes_per_domain_status(monkeypatch):
+    """用户要求"显示生成的每一批的结果"：api_result.items 须含每个候选的状态。"""
+    call_count = {"n": 0}
+    class _G:
+        def __init__(self, *a, **kw): pass
+        def generate(self, description, min_len, max_len, count):
+            call_count["n"] += 1
+            # 第 1 批：alpha+beta；alpha 可注册，beta 已注册
+            # 第 2 批：alpha 重复 + beta 重复 + gamma 新 → gamma 可注册 → 累计 2 个
+            if call_count["n"] == 1:
+                return [
+                    {"domain": "alpha", "reason": "r"},
+                    {"domain": "beta", "reason": "r"},
+                ]
+            return [
+                {"domain": "alpha", "reason": "r"},
+                {"domain": "beta", "reason": "r"},
+                {"domain": "gamma", "reason": "r"},
+            ]
+    monkeypatch.setattr("app.OpenAIGenerator", lambda **kw: _G())
+    monkeypatch.setattr(
+        "app.check_domains",
+        lambda domains, tlds, timeout: {
+            d: (
+                "available" if ("alpha" in d or "gamma" in d) else "registered"
+            )
+            for d in domains
+        },
+    )
+    client = app.test_client()
+    resp = client.post("/api/generate-stream", json={
+        "description": "x", "min_len": 4, "max_len": 10,
+        "tlds": ["com"], "count": 2, "api_key": "sk-test",
+    })
+    events = _parse_sse_events(resp.get_data(as_text=True))
+    api_results = [d for t, d in events if t == "api_result"]
+    assert len(api_results) >= 1
+    items = api_results[0]["items"]
+    # 2 个候选 × 1 个 tld = 2 个 full domain
+    assert len(items) == 2
+    statuses = {it["domain"]: it["status"] for it in items}
+    assert statuses["alpha.com"] == "available"
+    assert statuses["beta.com"] == "registered"
+    # summary 也要正确
+    assert api_results[0]["summary"]["available"] == 1
+    assert api_results[0]["summary"]["registered"] == 1
