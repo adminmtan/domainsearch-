@@ -26,7 +26,10 @@ cd /Users/mtan/Documents/01_Projects/P_yuming
 脚本会自动：
 1. 在项目根目录创建 `.venv/` 虚拟环境
 2. 安装/更新 `requirements.txt` 里的依赖
-3. 启动 Flask，访问 `http://127.0.0.1:5000/`
+3. 检测端口（默认 `5001`）是否被占用
+4. 启动 Flask，访问 `http://127.0.0.1:5001/`
+
+> 为什么默认 5001 而不是 5000？macOS 上 `ControlCenter` 系统服务默认占着 5000 端口（用于 AirPlay 接收），直接 `python app.py` 会失败。可用 `./run.sh --port 5050` 自定义。
 
 ### 方法二：手动 venv
 
