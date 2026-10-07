@@ -2,6 +2,10 @@
 from flask import Flask, request, jsonify, send_from_directory
 import os
 
+from openai import OpenAI
+from openai import AuthenticationError as OpenAIAuthenticationError
+from openai import APIConnectionError as OpenAIAPIConnectionError
+
 from generator import OpenAIGenerator
 from checker import check_domains
 
@@ -27,6 +31,57 @@ DEFAULT_TLDS = [
 @app.route("/api/tlds", methods=["GET"])
 def api_tlds():
     return jsonify({"tlds": DEFAULT_TLDS})
+
+
+@app.route("/api/validate-key", methods=["POST"])
+def api_validate_key():
+    """轻量验证 OpenAI API Key 是否有效。
+
+    通过 GET /v1/models 实现：
+    - 不消耗 token
+    - 兼容任何 OpenAI 协议代理
+    - 返回 {success, model_count, sample_models} 或 {success: False, error}
+    """
+    data = request.get_json(silent=True) or {}
+    api_key = (data.get("api_key") or "").strip()
+    base_url = (data.get("base_url") or "https://api.openai.com/v1").strip()
+    model = (data.get("model") or "gpt-4o-mini").strip()
+
+    if not api_key:
+        return jsonify({"success": False, "error": "API Key 不能为空"}), 400
+
+    try:
+        client = OpenAI(api_key=api_key, base_url=base_url)
+        # openai SDK: models.list() 在 1.x 是方法；保守处理：先按方法调
+        try:
+            models = client.models.list()
+            data_attr = models.data or []
+        except AttributeError:
+            # 退化：可能是属性访问或返回 SyncPage
+            models = getattr(client.models, "data", None)
+            data_attr = models or []
+        ids = [m.id for m in data_attr][:5]
+        return jsonify({
+            "success": True,
+            "model_count": len(data_attr),
+            "sample_models": ids,
+            "requested_model_available": (model in ids) if ids else None,
+        })
+    except OpenAIAuthenticationError as e:
+        return jsonify({
+            "success": False,
+            "error": f"API Key 无效或未授权：{getattr(e, 'message', '401 Unauthorized')}",
+        })
+    except OpenAIAPIConnectionError:
+        return jsonify({
+            "success": False,
+            "error": f"无法连接到 {base_url}，请检查网络或 Base URL",
+        })
+    except Exception as e:
+        return jsonify({
+            "success": False,
+            "error": f"验证失败：{type(e).__name__}: {e}",
+        })
 
 
 @app.route("/api/generate", methods=["POST"])

@@ -16,6 +16,8 @@ const $settingsBtn = $("settings-btn");
 const $settingsModal = $("settings-modal");
 const $settingsSave = $("settings-save");
 const $settingsCancel = $("settings-cancel");
+const $testConn = $("test-conn");
+const $testResult = $("test-result");
 const $apiKey = $("api-key");
 const $baseUrl = $("base-url");
 const $model = $("model");
@@ -213,9 +215,52 @@ function renderResults(domains, stats) {
 // ---- Modal ----
 function openSettings() {
   $settingsModal.classList.remove("hidden");
+  $testResult.textContent = "";
+  $testResult.className = "test-result";
 }
 function hideSettings() {
   $settingsModal.classList.add("hidden");
+}
+
+function setTestResult(msg, type) {
+  $testResult.textContent = msg || "";
+  $testResult.className = "test-result" + (type ? " " + type : "");
+}
+
+async function testConnection() {
+  const apiKey = $apiKey.value.trim();
+  if (!apiKey) {
+    setTestResult("请先填写 API Key", "error");
+    return;
+  }
+  $testConn.disabled = true;
+  setTestResult("测试中…", "loading");
+  try {
+    const resp = await fetch("/api/validate-key", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        api_key: apiKey,
+        base_url: $baseUrl.value.trim() || "https://api.openai.com/v1",
+        model: $model.value.trim() || "gpt-4o-mini",
+      }),
+    });
+    const data = await resp.json();
+    if (data.success) {
+      const sample = (data.sample_models || []).slice(0, 3).join(", ");
+      const available = data.requested_model_available;
+      let msg = `✓ 连接成功（可用模型数：${data.model_count}）`;
+      if (sample) msg += `，示例：${sample}`;
+      if (available === false) msg += `。注意：模型 "${$model.value.trim()}" 不在示例模型中，请确认。`;
+      setTestResult(msg, "success");
+    } else {
+      setTestResult("✗ " + (data.error || "连接失败"), "error");
+    }
+  } catch (e) {
+    setTestResult("✗ 网络错误：" + e.message, "error");
+  } finally {
+    $testConn.disabled = false;
+  }
 }
 
 // ---- Init ----
@@ -228,6 +273,7 @@ function init() {
     hideSettings();
     setStatus("设置已保存", "success");
   });
+  $testConn.addEventListener("click", testConnection);
   $settingsModal.addEventListener("click", (e) => {
     if (e.target === $settingsModal) hideSettings();
   });

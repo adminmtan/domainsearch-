@@ -234,10 +234,12 @@ button.primary:disabled { background: #8c959f; cursor: not-allowed; }
 
 .modal-actions {
   display: flex;
-  justify-content: flex-end;
+  align-items: center;
   gap: 8px;
   margin-top: 20px;
 }
+
+.modal-actions .spacer { flex: 1; }
 
 .modal-actions button {
   padding: 8px 16px;
@@ -250,6 +252,16 @@ button.primary:disabled { background: #8c959f; cursor: not-allowed; }
 .modal-actions button.primary {
   border: none;
 }
+
+.test-result {
+  margin-top: 12px;
+  font-size: 13px;
+  min-height: 18px;
+}
+
+.test-result.success { color: #1a7f37; }
+.test-result.error   { color: #cf222e; }
+.test-result.loading { color: #57606a; }
 
 @media (max-width: 600px) {
   .config-row { flex-direction: column; }

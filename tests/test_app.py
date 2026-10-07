@@ -53,6 +53,151 @@ def test_tlds_returns_list():
     assert len(resp.json["tlds"]) >= 10
 
 
+def test_validate_key_rejects_empty():
+    client = app.test_client()
+    resp = client.post("/api/validate-key", json={"api_key": ""})
+    assert resp.status_code == 400
+    assert resp.json["success"] is False
+
+
+def test_validate_key_succeeds(monkeypatch):
+    """成功路径：mock OpenAI client.models.list() 返回伪模型列表。"""
+    class _M:
+        def __init__(self, id):
+            self.id = id
+    class _ModelsResp:
+        def __init__(self):
+            self.data = [_M("gpt-4o-mini"), _M("gpt-4o")]
+    class _ModelsAPI:
+        def list(self):
+            return _ModelsResp()
+    class _Client:
+        def __init__(self, **kw):
+            self.kw = kw
+        @property
+        def models(self):
+            return _ModelsAPI()
+    import app as app_module
+    monkeypatch.setattr(app_module, "OpenAI", _Client)
+
+    client = app.test_client()
+    resp = client.post("/api/validate-key", json={
+        "api_key": "sk-good",
+        "base_url": "https://api.openai.com/v1",
+    })
+    assert resp.status_code == 200
+    data = resp.json
+    assert data["success"] is True
+    assert data["model_count"] == 2
+    assert "gpt-4o-mini" in data["sample_models"]
+
+
+def test_validate_key_fails_on_401(monkeypatch):
+    """失败路径：OpenAI 返回 401 → success=False，错误信息含 '401' 或 'Invalid'。"""
+    class _ModelsAPI:
+        def list(self):
+            import openai
+            raise openai.AuthenticationError(
+                message="Incorrect API key provided",
+                response=type("R", (), {
+                    "status_code": 401,
+                    "headers": {},
+                    "request": type("Req", (), {})(),
+                })(),
+                body=None,
+            )
+    class _Client:
+        def __init__(self, **kw):
+            pass
+        @property
+        def models(self):
+            return _ModelsAPI()
+    import app as app_module
+    monkeypatch.setattr(app_module, "OpenAI", _Client)
+
+    client = app.test_client()
+    resp = client.post("/api/validate-key", json={
+        "api_key": "sk-bad",
+    })
+    assert resp.status_code == 200
+    data = resp.json
+    assert data["success"] is False
+    assert "error" in data
+    # 不应回显 api_key
+    assert "sk-bad" not in data["error"]
+
+
+def test_validate_key_network_error_includes_base_url(monkeypatch):
+    """网络错误的消息应包含 base_url，便于用户排查。"""
+    class _ModelsAPI:
+        def list(self):
+            import openai
+            raise openai.APIConnectionError(request=None)
+    class _Client:
+        def __init__(self, **kw):
+            pass
+        @property
+        def models(self):
+            return _ModelsAPI()
+    import app as app_module
+    monkeypatch.setattr(app_module, "OpenAI", _Client)
+
+    client = app.test_client()
+    resp = client.post("/api/validate-key", json={
+        "api_key": "sk-x",
+        "base_url": "https://my-proxy.example.com/v1",
+    })
+    assert resp.status_code == 200
+    assert resp.json["success"] is False
+    assert "https://my-proxy.example.com/v1" in resp.json["error"]
+
+
+def test_validate_key_handles_network_error(monkeypatch):
+    """网络/连接错误：返回 success=False + 可读错误。"""
+    class _ModelsAPI:
+        def list(self):
+            import openai
+            raise openai.APIConnectionError(request=None)
+    class _Client:
+        def __init__(self, **kw):
+            pass
+        @property
+        def models(self):
+            return _ModelsAPI()
+    import app as app_module
+    monkeypatch.setattr(app_module, "OpenAI", _Client)
+
+    client = app.test_client()
+    resp = client.post("/api/validate-key", json={"api_key": "sk-x"})
+    assert resp.status_code == 200
+    assert resp.json["success"] is False
+    assert "error" in resp.json
+
+
+def test_validate_key_uses_default_base_url(monkeypatch):
+    """未传 base_url 时使用默认值。"""
+    seen = {}
+    class _ModelsAPI:
+        def list(self):
+            class _M:
+                data = []
+            return _M()
+    class _Client:
+        def __init__(self, **kw):
+            seen.update(kw)
+        @property
+        def models(self):
+            return _ModelsAPI()
+    import app as app_module
+    monkeypatch.setattr(app_module, "OpenAI", _Client)
+
+    client = app.test_client()
+    resp = client.post("/api/validate-key", json={"api_key": "sk-x"})
+    assert resp.status_code == 200
+    assert seen.get("base_url") == "https://api.openai.com/v1"
+    assert seen.get("api_key") == "sk-x"
+
+
 def test_generate_includes_warning_when_fewer_available(monkeypatch):
     """审查重点 2: 当可用域名 < 请求数量时，响应必须含 warning 字段。"""
     # Mock generator to return candidates
