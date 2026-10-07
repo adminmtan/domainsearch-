@@ -12,6 +12,16 @@ from checker import check_domains
 app = Flask(__name__, static_folder="static", static_url_path="/static")
 
 
+# Disable HTTP caching for all responses during development.
+# 防止浏览器缓存旧版 static 资源导致按钮事件未绑定等问题。
+@app.after_request
+def add_no_cache(response):
+    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    response.headers["Pragma"] = "no-cache"
+    response.headers["Expires"] = "0"
+    return response
+
+
 @app.route("/")
 def index():
     return send_from_directory("static", "index.html")

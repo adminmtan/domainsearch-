@@ -53,6 +53,17 @@ def test_tlds_returns_list():
     assert len(resp.json["tlds"]) >= 10
 
 
+def test_static_responses_have_no_cache():
+    """防止浏览器缓存旧版静态资源导致按钮事件未绑定等诡异问题。"""
+    client = app.test_client()
+    for path in ("/", "/static/app.js", "/static/style.css"):
+        resp = client.get(path)
+        cc = resp.headers.get("Cache-Control", "")
+        assert "no-store" in cc or "no-cache" in cc, (
+            f"{path} missing no-cache header: {cc!r}"
+        )
+
+
 def test_validate_key_rejects_empty():
     client = app.test_client()
     resp = client.post("/api/validate-key", json={"api_key": ""})

@@ -216,7 +216,13 @@ button.primary:disabled { background: #8c959f; cursor: not-allowed; }
   z-index: 100;
 }
 
-.modal.hidden { display: none; }
+/* 防御：modal 默认隐藏，除非显式去掉 .hidden。
+   使用更高特异性防止任何 .modal { display:flex } 覆盖。 */
+.modal.hidden,
+.modal[hidden],
+.modal:not(.open) {
+  display: none !important;
+}
 
 .modal-content {
   background: #fff;
