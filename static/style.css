@@ -143,6 +143,86 @@ button.primary {
 button.primary:hover { background: #1858c4; }
 button.primary:disabled { background: #8c959f; cursor: not-allowed; }
 
+button.danger {
+  background: #cf222e;
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  padding: 10px 20px;
+  font-size: 14px;
+  font-weight: 500;
+  margin-top: 16px;
+}
+button.danger:hover { background: #a40e26; }
+
+button.link-btn {
+  background: none;
+  border: none;
+  color: #57606a;
+  font-size: 12px;
+  padding: 4px 8px;
+  cursor: pointer;
+}
+button.link-btn:hover { color: #1f2328; text-decoration: underline; }
+
+.action-row {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+.action-row button.primary,
+.action-row button.danger { margin-top: 16px; }
+
+.log-section {
+  background: #fff;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  padding: 16px 20px;
+  margin-bottom: 16px;
+  box-shadow: 0 1px 2px rgba(0,0,0,0.04);
+}
+.log-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+.log-header h2 {
+  font-size: 15px;
+  margin: 0;
+  font-weight: 600;
+}
+.log-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: 240px;
+  overflow-y: auto;
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: 12.5px;
+  line-height: 1.7;
+  color: #1f2328;
+  background: #fafbfc;
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+  padding: 8px 12px;
+}
+.log-list li {
+  border-bottom: 1px dashed #eaecef;
+  padding: 2px 0;
+  word-break: break-all;
+}
+.log-list li:last-child { border-bottom: none; }
+.log-list .log-time { color: #8c959f; margin-right: 6px; }
+.log-list .log-level-info  { color: #1f2328; }
+.log-list .log-level-warn  { color: #9a6700; }
+.log-list .log-level-error { color: #cf222e; }
+.log-list .log-level-done  { color: #1a7f37; font-weight: 600; }
+.log-list:empty::before {
+  content: "（暂无日志）";
+  color: #8c959f;
+}
+
 .status {
   margin-top: 12px;
   font-size: 13px;
@@ -215,6 +295,9 @@ button.primary:disabled { background: #8c959f; cursor: not-allowed; }
   justify-content: center;
   z-index: 100;
 }
+
+/* 通用 .hidden 工具类 */
+.hidden { display: none !important; }
 
 /* 防御：modal 默认隐藏，除非显式去掉 .hidden。
    使用更高特异性防止任何 .modal { display:flex } 覆盖。 */

@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-from flask import Flask, request, jsonify, send_from_directory
+import json
+import threading
+import time
+
+from flask import Flask, request, jsonify, send_from_directory, Response, stream_with_context
 import os
 
 from openai import OpenAI
@@ -176,7 +180,208 @@ def api_generate():
     return jsonify(response)
 
 
+# ---------------------------------------------------------------------------
+# 流式生成：SSE 实时推送进度；后台循环重试直到达 count 或用户停止。
+# ---------------------------------------------------------------------------
+
+# 用 job_id 持有"停止事件"，前端通过 POST /api/stop/<job_id> 触发停止。
+_JOBS_LOCK = threading.Lock()
+_JOBS: dict[str, threading.Event] = {}
+
+
+def _sse(event: str, data: dict) -> str:
+    """格式化为单条 SSE 事件。"""
+    return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
+
+
+@app.route("/api/generate-stream", methods=["POST"])
+def api_generate_stream():
+    data = request.get_json(silent=True) or {}
+    description = (data.get("description") or "").strip()
+    min_len = data.get("min_len")
+    max_len = data.get("max_len")
+    tlds = data.get("tlds") or []
+    count = data.get("count")
+    api_key = (data.get("api_key") or "").strip()
+    base_url = (data.get("base_url") or "https://api.openai.com/v1").strip()
+    model = (data.get("model") or "gpt-4o-mini").strip()
+
+    # 复用 /api/generate 的校验
+    if not description:
+        return _bad_request("描述内容不能为空")
+    if len(description) > 2000:
+        return _bad_request("描述内容不能超过 2000 字符")
+    if not api_key:
+        return _bad_request("请先在设置中填入 OpenAI API Key")
+    if not isinstance(min_len, int) or not isinstance(max_len, int):
+        return _bad_request("长度范围必须为整数")
+    if min_len < 2 or max_len > 20 or min_len > max_len:
+        return _bad_request("长度范围非法（2-20，且 min <= max）")
+    if not isinstance(count, int) or count < 1 or count > 50:
+        return _bad_request("数量必须为 1-50 的整数")
+    if not isinstance(tlds, list) or not tlds or not all(isinstance(t, str) for t in tlds):
+        return _bad_request("TLD 列表非法")
+
+    # 为本次任务创建 stop 事件
+    job_id = f"job-{int(time.time()*1000)}-{os.urandom(4).hex()}"
+    stop_event = threading.Event()
+    with _JOBS_LOCK:
+        _JOBS[job_id] = stop_event
+
+    def generate():
+        # 释放 job 注册（无论是否异常）
+        try:
+            yield _sse("start", {
+                "job_id": job_id,
+                "requested": count,
+                "tlds": tlds,
+                "min_len": min_len,
+                "max_len": max_len,
+                "ts": time.time(),
+            })
+
+            try:
+                gen = OpenAIGenerator(api_key=api_key, base_url=base_url, model=model)
+            except Exception as e:
+                yield _sse("error", {"msg": f"初始化 OpenAI 客户端失败：{e}"})
+                return
+
+            # 累计：已用 candidate name -> candidate dict
+            # 已用 full domain -> True（去重）
+            seen_names: set[str] = set()
+            seen_full: set[str] = set()
+            available: list[dict] = []
+            batch_no = 0
+            t_start = time.time()
+
+            # 每批生成数 = max(count, 4)，保证至少有进展
+            BATCH_SIZE = max(count, 4)
+
+            while len(available) < count:
+                if stop_event.is_set():
+                    yield _sse("stopped", {
+                        "reason": "user",
+                        "available": len(available),
+                        "elapsed": round(time.time() - t_start, 2),
+                    })
+                    return
+
+                batch_no += 1
+                batch_t0 = time.time()
+                yield _sse("batch_start", {"n": batch_no, "ts": time.time()})
+
+                try:
+                    new_candidates = gen.generate(
+                        description, min_len, max_len, BATCH_SIZE
+                    )
+                except Exception as e:
+                    yield _sse("error", {
+                        "msg": f"批次 {batch_no} OpenAI 调用失败：{e}",
+                        "batch": batch_no,
+                    })
+                    # 失败不要立即退出；给用户看到错误，但继续下一批
+                    # 避免单次抖动让任务死掉
+                    time.sleep(1)
+                    continue
+
+                # 去重
+                fresh = [c for c in new_candidates if c["domain"] not in seen_names]
+                for c in new_candidates:
+                    seen_names.add(c["domain"])
+
+                # 拼 full domain
+                full_domains: list[str] = []
+                full_to_cand: dict[str, dict] = {}
+                for cand in fresh:
+                    for tld in tlds:
+                        full = f"{cand['domain']}.{tld}"
+                        if full in seen_full:
+                            continue
+                        seen_full.add(full)
+                        full_domains.append(full)
+                        full_to_cand[full] = cand
+
+                yield _sse("batch_check", {
+                    "n": batch_no,
+                    "generated": len(new_candidates),
+                    "fresh": len(fresh),
+                    "to_check": len(full_domains),
+                })
+
+                if not full_domains:
+                    yield _sse("batch_done", {
+                        "n": batch_no,
+                        "available_this_batch": 0,
+                        "total_available": len(available),
+                        "elapsed": round(time.time() - batch_t0, 2),
+                    })
+                    continue
+
+                statuses = check_domains(full_domains, tlds, timeout=5.0)
+                batch_available = 0
+                for full, status in statuses.items():
+                    if status != "available":
+                        continue
+                    cand = full_to_cand[full]
+                    available.append({
+                        "domain": full,
+                        "reason": cand["reason"],
+                        "length": len(cand["domain"]),
+                        "tld": full.split(".", 1)[1],
+                        "status": "available",
+                    })
+                    batch_available += 1
+                    if len(available) >= count:
+                        break
+
+                yield _sse("batch_done", {
+                    "n": batch_no,
+                    "available_this_batch": batch_available,
+                    "total_available": len(available),
+                    "elapsed": round(time.time() - batch_t0, 2),
+                })
+
+            # 截断（理论上不会超，但保险）
+            available = available[:count]
+
+            yield _sse("done", {
+                "domains": available,
+                "stats": {
+                    "batches": batch_no,
+                    "generated": len(seen_names),
+                    "available": len(available),
+                    "requested": count,
+                },
+                "elapsed": round(time.time() - t_start, 2),
+            })
+        finally:
+            with _JOBS_LOCK:
+                _JOBS.pop(job_id, None)
+
+    response = Response(
+        stream_with_context(generate()),
+        mimetype="text/event-stream",
+    )
+    # SSE 不应被代理/CDN 缓冲
+    response.headers["Cache-Control"] = "no-cache"
+    response.headers["X-Accel-Buffering"] = "no"
+    response.headers["Connection"] = "keep-alive"
+    return response
+
+
+@app.route("/api/stop/<job_id>", methods=["POST"])
+def api_stop(job_id: str):
+    """前端点"停止"时调用，触发对应 job 的 stop_event。"""
+    with _JOBS_LOCK:
+        evt = _JOBS.get(job_id)
+    if evt is None:
+        return jsonify({"success": False, "error": "job 不存在或已结束"}), 404
+    evt.set()
+    return jsonify({"success": True})
+
+
 if __name__ == "__main__":
     import os
     port = int(os.environ.get("PORT", "5001"))
-    app.run(host="127.0.0.1", port=port, debug=True)
+    # threaded=True 让 SSE 长连接不阻塞其它请求
+    app.run(host="127.0.0.1", port=port, debug=True, threaded=True)
