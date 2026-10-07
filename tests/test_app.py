@@ -41,3 +41,13 @@ def test_generate_rejects_missing_api_key():
         "api_key": "",
     })
     assert resp.status_code == 400
+
+
+def test_tlds_returns_list():
+    client = app.test_client()
+    resp = client.get("/api/tlds")
+    assert resp.status_code == 200
+    assert "tlds" in resp.json
+    assert isinstance(resp.json["tlds"], list)
+    assert "com" in resp.json["tlds"]
+    assert len(resp.json["tlds"]) >= 10

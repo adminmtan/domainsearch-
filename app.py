@@ -16,6 +16,18 @@ def _bad_request(msg: str):
     return jsonify({"success": False, "error": msg}), 400
 
 
+DEFAULT_TLDS = [
+    "com", "io", "ai", "dev", "app", "net", "org",
+    "co", "me", "xyz", "tech", "cloud", "studio", "lab",
+    "tools", "site", "online", "store", "info", "biz",
+]
+
+
+@app.route("/api/tlds", methods=["GET"])
+def api_tlds():
+    return jsonify({"tlds": DEFAULT_TLDS})
+
+
 @app.route("/api/generate", methods=["POST"])
 def api_generate():
     data = request.get_json(silent=True) or {}
