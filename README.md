@@ -16,11 +16,27 @@
 
 要求 Python 3.10+。
 
+macOS / Linux（推荐使用 `python3` / `pip3`）：
+
+```bash
+python3 -m pip install -r requirements.txt
+```
+
+或（如果你的环境已配置 `pip`）：
+
 ```bash
 pip install -r requirements.txt
 ```
 
+> macOS 上常见 `pip: command not found`，这是因为系统默认未安装 `pip`。用 `python3 -m pip ...` 即可绕过。如果你只有 Homebrew Python：`brew install python` 即可同时获得 `python3` 和 `pip3`。
+
 ## 启动
+
+```bash
+python3 app.py
+```
+
+如果 `python` 命令在你的 shell 里指向 Python 3，也可以用：
 
 ```bash
 python app.py
