@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>域名生成报告 · demo-job-v2</title>
+<style>
+  :root {
+    --bg: #0f1115; --panel: #1c1f26; --border: #2a2f3a;
+    --text: #e6e8ee; --muted: #8b94a3; --accent: #4f9dff;
+    --good: #00c896;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 32px 16px; background: var(--bg); color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", sans-serif;
+    line-height: 1.6;
+  }
+  .container { max-width: 880px; margin: 0 auto; }
+  h1 { font-size: 28px; margin: 0 0 8px; }
+  .meta { color: var(--muted); font-size: 13px; margin-bottom: 24px; }
+  .meta code { background: var(--panel); padding: 2px 6px; border-radius: 4px; }
+  .panel {
+    background: var(--panel); border: 1px solid var(--border);
+    border-radius: 12px; padding: 20px; margin-bottom: 20px;
+  }
+  .panel h2 { margin-top: 0; font-size: 18px; }
+  .desc { white-space: pre-wrap; color: #c8ced9; }
+  .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 12px; }
+  .stat { background: #15181f; border-radius: 8px; padding: 12px; text-align: center; }
+  .stat-num { font-size: 24px; font-weight: 700; color: var(--accent); }
+  .stat-label { font-size: 12px; color: var(--muted); margin-top: 4px; }
+  .domain-card {
+    background: #15181f; border: 1px solid var(--border);
+    border-radius: 10px; padding: 14px 16px; margin-bottom: 10px;
+    transition: border-color .15s;
+  }
+  .domain-card:hover { border-color: var(--good); }
+  .domain-card-head {
+    display: flex; align-items: center; gap: 10px; margin-bottom: 8px;
+  }
+  .domain-num {
+    background: var(--accent); color: #0f1115; border-radius: 50%;
+    width: 22px; height: 22px; display: inline-flex; align-items: center;
+    justify-content: center; font-size: 12px; font-weight: 700; flex-shrink: 0;
+  }
+  .domain-name { font-size: 16px; font-weight: 600; color: var(--good); }
+  .domain-badge {
+    font-size: 11px; color: var(--muted); background: #20242c;
+    padding: 2px 8px; border-radius: 999px;
+  }
+  .domain-len { margin-left: auto; font-size: 12px; color: var(--muted); }
+  .domain-reason { color: #c8ced9; font-size: 13px; padding-left: 32px; }
+  footer { text-align: center; color: var(--muted); font-size: 12px; margin-top: 32px; }
+</style>
+</head>
+<body>
+<div class="container">
+  <h1>🎯 智能域名生成报告</h1>
+  <div class="meta">
+    任务 ID：<code>demo-job-v2</code> · 2024-11-09 17:20:00 · 用时 18.5s
+  </div>
+
+  <div class="panel">
+    <h2>📝 需求描述</h2>
+    <div class="desc">为 AI 图像生成 SaaS 找简短好记的域名</div>
+  </div>
+
+  <div class="panel">
+    <h2>📊 统计概览</h2>
+    <div class="stats">
+      <div class="stat"><div class="stat-num">3</div><div class="stat-label">请求</div></div>
+      <div class="stat"><div class="stat-num">12</div><div class="stat-label">AI 生成</div></div>
+      <div class="stat"><div class="stat-num">3</div><div class="stat-label">可注册</div></div>
+      <div class="stat"><div class="stat-num">2</div><div class="stat-label">批次</div></div>
+      <div class="stat"><div class="stat-num">18.5s</div><div class="stat-label">耗时</div></div>
+    </div>
+  </div>
+
+  <div class="panel">
+    <h2>✅ 推荐域名（3 个）</h2>
+    
+        <div class="domain-card">
+          <div class="domain-card-head">
+            <span class="domain-num">1</span>
+            <span class="domain-name">mythforge.io</span>
+            <span class="domain-badge">. io</span>
+            <span class="domain-len">9字符</span>
+          </div>
+          <div class="domain-reason">💡 由 myth(神话) + forge(锻造) 组合，呼应&#x27;打造开发者神话工具&#x27;；纯字母、电话测试一次过。</div>
+        </div>
+        <div class="domain-card">
+          <div class="domain-card-head">
+            <span class="domain-num">2</span>
+            <span class="domain-name">lumen.app</span>
+            <span class="domain-badge">. app</span>
+            <span class="domain-len">5字符</span>
+          </div>
+          <div class="domain-reason">💡 lumen(流明) 直接暗示产品&#x27;点亮创意&#x27;的核心。</div>
+        </div>
+        <div class="domain-card">
+          <div class="domain-card-head">
+            <span class="domain-num">3</span>
+            <span class="domain-name">sprout.dev</span>
+            <span class="domain-badge">. dev</span>
+            <span class="domain-len">6字符</span>
+          </div>
+          <div class="domain-reason">💡 sprout(萌芽) 暗示&#x27;从 0 到 1 成长&#x27;的产品定位。</div>
+        </div>
+  </div>
+
+  <footer>由 智能域名生成器 自动生成 · 2024-11-09 17:20:00</footer>
+</div>
+</body>
+</html>
