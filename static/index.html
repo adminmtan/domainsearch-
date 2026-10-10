@@ -3,17 +3,26 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>智能域名生成器</title>
+  <title>Yuming — 智能域名生成器</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap">
   <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
   <header>
-    <h1>智能域名生成器</h1>
-    <button id="settings-btn" aria-label="设置">⚙ 设置</button>
+    <h1>Yu<span>·</span>ming</h1>
+    <div class="header-actions">
+      <button id="wechat-btn" class="header-btn" aria-label="微信推送">
+        <span id="wechat-status-dot" class="status-dot status-dot-disconnected"></span>
+        微信
+      </button>
+      <button id="settings-btn" class="header-btn" aria-label="设置">⚙ 设置</button>
+    </div>
   </header>
 
   <main>
-    <section class="form-section">
+    <section class="section-card form-section anim-fade-up">
       <label for="description">描述内容</label>
       <textarea id="description" rows="4" maxlength="2000"
                 placeholder="例如：一个面向开发者的 AI 工具平台，专注于代码生成与自动化"></textarea>
@@ -22,47 +31,141 @@
       <div id="tld-list" class="tld-list"></div>
 
       <div class="config-row">
-        <label>最小长度 <input type="number" id="min-len" value="4" min="2" max="20"></label>
-        <label>最大长度 <input type="number" id="max-len" value="12" min="2" max="20"></label>
-        <label>输出数量 <input type="number" id="count" value="10" min="1" max="50"></label>
+        <label>最小长度
+          <input type="number" id="min-len" value="4" min="2" max="20">
+        </label>
+        <label>最大长度
+          <input type="number" id="max-len" value="12" min="2" max="20">
+        </label>
+        <label>输出数量
+          <input type="number" id="count" value="10" min="1" max="50">
+        </label>
+        <label>字符风格
+          <select id="domain-style">
+            <option value="letters" selected>纯字母（默认）</option>
+            <option value="letters_and_digits">字母 + 数字</option>
+          </select>
+        </label>
       </div>
 
       <div class="action-row">
-        <button id="generate-btn" class="primary">生成域名</button>
-        <button id="stop-btn" class="danger hidden">停止</button>
+        <button id="generate-btn" class="btn btn-primary">
+          <span class="btn-label">生成域名</span>
+        </button>
+        <button id="stop-btn" class="btn btn-danger hidden">
+          停止
+        </button>
       </div>
       <div id="status" class="status"></div>
     </section>
 
-    <section class="log-section">
+    <section class="section-card log-section anim-fade-up" style="animation-delay: 0.05s">
       <div class="log-header">
         <h2>运行日志</h2>
-        <button id="clear-log" type="button" class="link-btn">清空</button>
+        <button id="clear-log" class="btn-link" type="button">清空</button>
       </div>
       <ol id="log-list" class="log-list" aria-live="polite"></ol>
     </section>
 
-    <section id="results" class="results-section"></section>
+    <section id="results" class="results-section anim-fade-up" style="animation-delay: 0.1s"></section>
   </main>
 
+  <!-- 设置弹窗 -->
   <div id="settings-modal" class="modal hidden" role="dialog" aria-modal="true">
     <div class="modal-content">
       <h2>设置</h2>
-      <label>OpenAI API Key
+      <div class="modal-section">
+        <label>OpenAI API Key</label>
         <input type="password" id="api-key" placeholder="sk-...">
-      </label>
-      <label>Base URL
+      </div>
+      <div class="modal-section">
+        <label>Base URL</label>
         <input type="text" id="base-url" value="https://api.openai.com/v1">
-      </label>
-      <label>Model
+      </div>
+      <div class="modal-section">
+        <label>Model</label>
         <input type="text" id="model" value="gpt-4o-mini">
-      </label>
+      </div>
       <div id="test-result" class="test-result"></div>
       <div class="modal-actions">
-        <button id="test-conn" type="button">测试连接</button>
+        <button id="test-conn" class="btn btn-ghost">测试连接</button>
         <span class="spacer"></span>
-        <button id="settings-cancel">取消</button>
-        <button id="settings-save" class="primary">保存</button>
+        <button id="settings-cancel" class="btn btn-ghost">取消</button>
+        <button id="settings-save" class="btn btn-primary">保存</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 微信推送弹窗 -->
+  <div id="wechat-modal" class="modal hidden" role="dialog" aria-modal="true">
+    <div class="modal-content wechat-modal-content">
+      <h2>微信推送</h2>
+
+      <div class="modal-section">
+        <div class="wechat-status-grid">
+          <div class="wechat-status-item">
+            <div class="wechat-status-label">Bot 服务</div>
+            <div id="wechat-bot-state" class="wechat-status-value">检测中…</div>
+          </div>
+          <div class="wechat-status-item">
+            <div class="wechat-status-label">微信登录</div>
+            <div id="wechat-login-state" class="wechat-status-value">—</div>
+          </div>
+        </div>
+        <div class="wechat-status-item">
+          <div class="wechat-status-label">账号 ID</div>
+          <div id="wechat-account" class="wechat-account-id">—</div>
+        </div>
+        <div class="wechat-actions-row">
+          <button id="wechat-refresh" class="btn btn-ghost btn-sm">刷新</button>
+          <button id="wechat-login" class="btn btn-primary btn-sm" disabled>扫码登录</button>
+          <button id="wechat-logout" class="btn btn-danger btn-sm" disabled>登出</button>
+        </div>
+        <div id="wechat-hint" class="wechat-hint-text"></div>
+        <div id="wechat-qrcode" class="wechat-qrcode-box" hidden>
+          <div class="wechat-qrcode-label">请用微信扫一扫：</div>
+          <div id="wechat-qrcode-img" class="wechat-qrcode-img"></div>
+          <div id="wechat-qrcode-url" class="wechat-qrcode-url"></div>
+          <a id="wechat-qrcode-link" class="wechat-qrcode-link" target="_blank" rel="noopener">在新窗口打开</a>
+        </div>
+      </div>
+
+      <div class="modal-section">
+        <div class="wechat-contact-count" id="wechat-contact-count">// 0 个联系人</div>
+        <div id="wechat-contact-list" class="wechat-contact-list">
+          <div class="wechat-empty">未发现联系人。<br>请先让目标用户在 24 小时内主动给你发一条消息。</div>
+        </div>
+        <div class="wechat-tip">
+          ⓘ 微信协议仅允许向 24 小时内联系过你的人主动发消息。
+        </div>
+      </div>
+
+      <div class="modal-section">
+        <label class="wechat-checkbox-row">
+          <input type="checkbox" id="wechat-auto-push" checked>
+          生成完成后自动推送到已勾选的联系人
+        </label>
+      </div>
+
+      <div class="modal-actions">
+        <span class="spacer"></span>
+        <button id="wechat-test" class="btn btn-ghost btn-sm" disabled>测试发送</button>
+        <button id="wechat-cancel" class="btn btn-ghost">关闭</button>
+        <button id="wechat-save" class="btn btn-primary">保存勾选</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 推送事件日志面板（独立显示，主页面右侧浮动） -->
+  <div id="push-event-panel" class="push-event-panel collapsed">
+    <div class="push-event-header" id="push-event-header">
+      <span class="push-event-title">📨 推送事件</span>
+      <span class="push-event-count" id="push-event-count">0</span>
+      <button class="push-event-toggle" id="push-event-toggle" aria-label="折叠">▾</button>
+    </div>
+    <div class="push-event-body" id="push-event-body">
+      <div id="push-event-log" class="push-event-log">
+        <div class="push-event-empty">尚未推送任何消息</div>
       </div>
     </div>
   </div>
