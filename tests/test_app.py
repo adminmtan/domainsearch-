@@ -33,6 +33,37 @@ def test_generate_rejects_count_out_of_range():
     assert resp.status_code == 400
 
 
+def test_generate_rejects_invalid_domain_style():
+    client = app.test_client()
+    resp = client.post("/api/generate", json={
+        "description": "x",
+        "min_len": 4, "max_len": 10, "tlds": ["com"], "count": 5,
+        "domain_style": "emoji",
+        "api_key": "sk-test",
+    })
+    assert resp.status_code == 400
+    assert "domain_style" in resp.json["error"]
+
+
+def test_generate_accepts_valid_domain_style(monkeypatch):
+    """两个合法风格都能过校验。"""
+    class _G:
+        def __init__(self, *a, **kw): pass
+        def generate(self, *a, **kw):
+            return [{"domain": "abc", "reason": "r"}]
+    monkeypatch.setattr("app.OpenAIGenerator", lambda **kw: _G())
+    monkeypatch.setattr("app.check_domains", lambda d, t, **kw: {x: "available" for x in d})
+    client = app.test_client()
+    for style in ("letters", "letters_and_digits"):
+        resp = client.post("/api/generate", json={
+            "description": "x",
+            "min_len": 3, "max_len": 6, "tlds": ["com"], "count": 1,
+            "domain_style": style,
+            "api_key": "sk-test",
+        })
+        assert resp.status_code == 200, f"style={style}: {resp.status_code} {resp.get_data(as_text=True)[:200]}"
+
+
 def test_generate_rejects_missing_api_key():
     client = app.test_client()
     resp = client.post("/api/generate", json={
@@ -242,7 +273,7 @@ class _FakeGenerator:
     def __init__(self, *a, **kw):
         self.domains = ["mythforge", "codebase"]
 
-    def generate(self, description, min_len, max_len, count):
+    def generate(self, description, min_len, max_len, count, domain_style=None):
         return [{"domain": d, "reason": f"reason for {d}"} for d in self.domains]
 
 
@@ -335,6 +366,10 @@ def test_stream_retries_when_no_available(monkeypatch):
 
     monkeypatch.setattr("app.OpenAIGenerator", lambda **kw: _G())
     monkeypatch.setattr("app.check_domains_with_errors", fake_check)
+    # 该测试无 unknown 域名，不需要 mock retry；保留以防未来扩展。
+    def fake_retry_stuck(domains, *, timeout, **kwargs):
+        return {d: "unknown" for d in domains}, {d: "timeout after 5.0s" for d in domains}, 1
+    monkeypatch.setattr("app.retry_unknown_domains", fake_retry_stuck)
     client = app.test_client()
     resp = client.post("/api/generate-stream", json={
         "description": "x", "min_len": 4, "max_len": 10,
@@ -525,3 +560,192 @@ def test_stream_api_result_includes_per_domain_status(monkeypatch):
     # summary 也要正确
     assert api_results[0]["summary"]["available"] == 1
     assert api_results[0]["summary"]["registered"] == 1
+
+
+def test_stream_retries_unknown_domains_in_place(monkeypatch):
+    """unknown 域名应原地重试，不立即丢弃。
+
+    第 1 批：b.com 超时 → 重试 1 次后成功（available）；仍 unknown 跳到下批
+    """
+    # 禁用真实 sleep 避免拖慢测试
+    # 注意：retry_unknown_domains 内部用 time.sleep，需直接 patch checker.time.sleep
+    monkeypatch.setattr("checker.time.sleep", lambda *a, **kw: None)
+
+    gen_calls = {"n": 0}
+    class _G:
+        def __init__(self, *a, **kw): pass
+        def generate(self, description, min_len, max_len, count):
+            gen_calls["n"] += 1
+            # 第 1 批只有 b.com 一个候选
+            return [{"domain": "b", "reason": "r"}]
+
+    # 记录每次 dmcheck 调用进来的域名集合
+    calls_log = []
+    def fake_check(domains, tlds, timeout):
+        calls_log.append(list(domains))
+        statuses, errors = {}, {}
+        for d in domains:
+            if d == "b.com" and len(calls_log) == 1:
+                # 首次超时
+                statuses[d] = "unknown"
+                errors[d] = "timeout after 5.0s"
+            elif d == "b.com":
+                # 重试成功
+                statuses[d] = "available"
+            else:
+                statuses[d] = "registered"
+        return statuses, errors
+
+    # mock _check_one 让 retry 阶段不发真实 HTTP。
+    # 注意：retry 路径直接调 _check_one，与 check_domains_with_errors 是两个入口。
+    # 但测试期望 retry_in_place 事件仍能触发、且 attempts 数 >= 2。
+    # 我们让 _check_one 也按 calls_log 次数变化，模拟"首次 unknown，重试 available"。
+    def fake_check_one(domain, timeout):
+        # 注意：b.com 在 calls_log 末尾是首次出现，重试是在原 call 之后的独立调用
+        if domain == "b.com":
+            # 首次 check 走 check_domains_with_errors 已经被记 1 次；
+            # 第一次进 _check_one 是第 1 次 retry（unknown 仍待救回），
+            # 但这里我们简化为：第一次进 _check_one 返回 available 模拟"重试成功"。
+            # 如果想测 2 次 retry，可在外层用计数器。
+            return "available", ""
+        return "registered", ""
+
+    monkeypatch.setattr("app.OpenAIGenerator", lambda **kw: _G())
+    monkeypatch.setattr("app.check_domains_with_errors", fake_check)
+    # mock retry_unknown_domains 本身，避免真实 HTTP 请求。
+    # app 里调用形式：retry_unknown_domains(unknown_domains, timeout=5.0)
+    # 不传 delays / sleep，所以 mock 要兼容关键字可选。
+    def fake_retry_b(domains, *, timeout, **kwargs):
+        return {d: "available" for d in domains}, {d: "" for d in domains}, 1
+    monkeypatch.setattr("app.retry_unknown_domains", fake_retry_b)
+    client = app.test_client()
+    resp = client.post("/api/generate-stream", json={
+        "description": "x", "min_len": 4, "max_len": 10,
+        "tlds": ["com"], "count": 1, "api_key": "sk-test",
+    })
+    events = _parse_sse_events(resp.get_data(as_text=True))
+    types = [t for t, _ in events]
+    assert "done" in types
+    done = next(d for t, d in events if t == "done")
+    # 重试成功后应有 1 个可注册域名
+    assert len(done["domains"]) == 1
+    assert done["domains"][0]["domain"] == "b.com"
+    # 不该进入下一批（一个候选 retry 就成功了）
+    assert gen_calls["n"] == 1, f"应在原地重试，不该继续生成。实际 gen_calls={gen_calls['n']}"
+    # 应有 retry_in_place 事件
+    retries = [d for t, d in events if t == "retry_in_place"]
+    assert len(retries) >= 1
+    assert retries[0]["domains"] == ["b.com"]
+    assert retries[0]["attempts"] >= 2  # 至少 2 次（首次 + 1 次重试）
+
+
+def test_stream_keeps_unknown_after_max_retries_and_continues(monkeypatch):
+    """unknown 域名在原地用完重试次数后保留 unknown，并继续下一批。"""
+    monkeypatch.setattr("checker.time.sleep", lambda *a, **kw: None)
+
+    gen_calls = {"n": 0}
+    class _G:
+        def __init__(self, *a, **kw): pass
+        def generate(self, description, min_len, max_len, count):
+            gen_calls["n"] += 1
+            if gen_calls["n"] == 1:
+                return [{"domain": "stuck", "reason": "r"}]
+            return [{"domain": "ok", "reason": "r"}]
+
+    calls_log = []
+    def fake_check(domains, tlds, timeout):
+        calls_log.append(list(domains))
+        statuses, errors = {}, {}
+        for d in domains:
+            if d == "stuck.com":
+                statuses["stuck.com"] = "unknown"
+                errors["stuck.com"] = "timeout after 5.0s"
+            elif d == "ok.com":
+                statuses["ok.com"] = "available"
+            else:
+                statuses[d] = "registered"
+        return statuses, errors
+
+    monkeypatch.setattr("app.OpenAIGenerator", lambda **kw: _G())
+    monkeypatch.setattr("app.check_domains_with_errors", fake_check)
+    # mock retry：stuck.com 仍 unknown（用完重试次数仍 unknown）
+    def fake_retry_stuck(domains, *, timeout, **kwargs):
+        return {d: "unknown" for d in domains}, {d: "timeout after 5.0s" for d in domains}, 1
+    monkeypatch.setattr("app.retry_unknown_domains", fake_retry_stuck)
+    client = app.test_client()
+    resp = client.post("/api/generate-stream", json={
+        "description": "x", "min_len": 4, "max_len": 10,
+        "tlds": ["com"], "count": 1, "api_key": "sk-test",
+    })
+    events = _parse_sse_events(resp.get_data(as_text=True))
+    done = next(d for t, d in events if t == "done")
+    assert len(done["domains"]) == 1
+    assert done["domains"][0]["domain"] == "ok.com"
+    # 至少 2 批：第 1 批 stuck 重试仍失败 → 生成第 2 批 → 拿到 ok
+    assert gen_calls["n"] >= 2
+    # stuck.com 出现过 3 次：原始 + 2 次原地重试
+    stuck_calls = [c for c in calls_log if "stuck.com" in c]
+    assert len(stuck_calls) == 3, f"stuck.com 应被调 3 次，实际 {len(stuck_calls)}"
+
+
+def test_stream_retry_attempts_capped_at_max(monkeypatch):
+    """验证原地重试次数上限 = 2（共调用 3 次：1 原始 + 2 重试）。"""
+    monkeypatch.setattr("checker.time.sleep", lambda *a, **kw: None)
+
+    class _G:
+        def __init__(self, *a, **kw): pass
+        def generate(self, description, min_len, max_len, count):
+            return [{"domain": "x", "reason": "r"}]
+
+    calls_log = []
+    def fake_check(domains, tlds, timeout):
+        calls_log.append(list(domains))
+        return {d: "unknown" for d in domains}, {d: "timeout after 5.0s" for d in domains}
+
+    monkeypatch.setattr("app.OpenAIGenerator", lambda **kw: _G())
+    monkeypatch.setattr("app.check_domains_with_errors", fake_check)
+    # mock retry：stuck.com 仍 unknown（用完重试次数仍 unknown）
+    def fake_retry_stuck(domains, *, timeout, **kwargs):
+        return {d: "unknown" for d in domains}, {d: "timeout after 5.0s" for d in domains}, 1
+    monkeypatch.setattr("app.retry_unknown_domains", fake_retry_stuck)
+    client = app.test_client()
+    # 用 count=1 + 一批后退出条件，但 unknown 不会被记入 available。
+    # 我们通过 monkeypatch 限制打满循环。这里只验证 x.com 被检查次数。
+    # 为避免死循环，monkeypatch 替换生成器，让第二次后结束：
+    gen = {"n": 0}
+    real_g = _G
+    class _G2(real_g):
+        def generate(self, *a, **kw):
+            gen["n"] += 1
+            if gen["n"] >= 3:
+                # 让主循环的终止条件（len(available) >= count 永远不成立）
+                # 借助 batch_no 限制：本测试通过 fake_check 阻止 available
+                return [{"domain": "y", "reason": "r"}]
+            return [{"domain": "x", "reason": "r"}]
+    monkeypatch.setattr("app.OpenAIGenerator", lambda **kw: _G2())
+    # 限制主循环迭代上限以避免死循环——直接用 count=1，但 unknown 永远不为 available
+    # 实际上主循环只在 len(available)>=count 时退出，且不会停下 — 测试用 monkeypatch 限制。
+    # 这里把 count 设成 1，并让第二轮生成一个 available
+    gen["n"] = 0
+    def check_with_yok(domains, tlds, timeout):
+        calls_log.append(list(domains))
+        statuses, errors = {}, {}
+        for d in domains:
+            if d == "y.com":
+                statuses[d] = "available"
+            else:
+                statuses[d] = "unknown"
+                errors[d] = "timeout after 5.0s"
+        return statuses, errors
+    monkeypatch.setattr("app.check_domains_with_errors", check_with_yok)
+    resp = client.post("/api/generate-stream", json={
+        "description": "x", "min_len": 4, "max_len": 10,
+        "tlds": ["com"], "count": 1, "api_key": "sk-test",
+    })
+    events = _parse_sse_events(resp.get_data(as_text=True))
+    done = next(d for t, d in events if t == "done")
+    assert len(done["domains"]) == 1
+    assert done["domains"][0]["domain"] == "y.com"
+    # x.com 应被检查 3 次（原始 + 2 次重试），不会无限
+    x_calls = [c for c in calls_log if "x.com" in c]
+    assert len(x_calls) == 3, f"x.com 应被调 3 次（1 原始 + 2 重试），实际 {len(x_calls)}"

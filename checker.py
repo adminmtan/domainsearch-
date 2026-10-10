@@ -11,6 +11,7 @@ source (Oct 2026): `fetch('/api/whois/' + encodeURIComponent(domain))`.
 """
 from __future__ import annotations
 
+import time
 import requests
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Literal
@@ -131,3 +132,70 @@ def _check_one(domain: str, timeout: float) -> tuple[DomainStatus, str]:
         return "unknown", f"unexpected status value: {status!r}"
 
     return status, ""  # type: ignore[return-value]
+
+
+# 原地重试参数：每个 unknown 域名最多重试 2 次，退避 1s/3s。
+# 总调用次数 = 1（原始）+ 2（重试）= 3 次。
+# 设计理由：dmcheck 偶发超时（限流/网络抖动）很常见；给一两次机会基本能救回来，
+# 仍然失败说明这个域名本轮拿不到结果，保留 unknown 让用户可见，不要无限拖。
+IN_PLACE_RETRY_DELAYS_S: tuple[float, ...] = (1.0, 3.0)
+
+
+def retry_unknown_domains(
+    domains: list[str],
+    *,
+    timeout: float = REQUEST_TIMEOUT,
+    delays: tuple[float, ...] = IN_PLACE_RETRY_DELAYS_S,
+    sleep: "callable" = time.sleep,
+) -> tuple[dict[str, DomainStatus], dict[str, str], int]:
+    """对一组域名做原地重试，只针对 status == "unknown" 的域名。
+
+    每个 (domain, delay) 独立调用一次 ``_check_one`` 并行发起；
+    每个 delay 前先 ``sleep(delay)``，作为退避。
+
+    Args:
+        domains: 待重试的完整域名（必须已确认上一轮是 unknown）
+        timeout: 每次请求超时
+        delays:  重试前等待时长元组（长度 = 最大重试次数）
+        sleep:   注入用的 sleep 函数，便于测试时禁用
+
+    Returns:
+        (new_statuses, new_errors, attempts_performed) where:
+            new_statuses: 已解析到的覆盖原 unknown，仍未解析到的保持 "unknown"
+            new_errors:   仍失败的带错误信息；成功的清除
+            attempts_performed: 实际发起的 dmcheck 轮次数（即 len(delays) 或更少）
+    """
+    new_statuses: dict[str, DomainStatus] = {}
+    new_errors: dict[str, str] = {}
+    attempts = 0
+    if not domains:
+        return new_statuses, new_errors, 0
+
+    pending = list(domains)
+    for delay in delays:
+        sleep(delay)
+        attempts += 1
+        if not pending:
+            break
+        with ThreadPoolExecutor(
+            max_workers=min(MAX_WORKERS, len(pending))
+        ) as ex:
+            future_to_domain = {
+                ex.submit(_check_one, d, timeout): d for d in pending
+            }
+            for fut in as_completed(future_to_domain):
+                d = future_to_domain[fut]
+                try:
+                    status, err = fut.result()
+                except Exception as e:  # never let one bad domain kill the batch
+                    status, err = "unknown", f"worker error: {type(e).__name__}: {e}"
+                new_statuses[d] = status
+                if err:
+                    new_errors[d] = err
+                else:
+                    # 成功的清除旧 unknown 错误（如果有）
+                    new_errors.pop(d, None)
+        # 本轮已解析的不进入下一轮（节省调用）
+        pending = [d for d in pending if new_statuses.get(d, "unknown") == "unknown"]
+
+    return new_statuses, new_errors, attempts
