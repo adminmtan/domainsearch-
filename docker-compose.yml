@@ -15,7 +15,7 @@ version: "3.8"
 services:
   yuming:
     build: .
-    image: ghcr.io/${GITHUB_REPOSITORY:-mtan/p-yuming}:latest
+    image: ghcr.io/adminmtan/yuming:latest
     container_name: yuming
     restart: unless-stopped
     ports:

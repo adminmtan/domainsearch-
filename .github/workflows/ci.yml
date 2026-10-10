@@ -5,10 +5,16 @@ on:
     branches: [main, master]
   pull_request:
     branches: [main, master]
+  # 允许在 UI 手动触发（不依赖 push）
+  workflow_dispatch:
 
 env:
   REGISTRY: ghcr.io
-  IMAGE_NAME: ${{ github.repository }}
+  # 仓库名末尾 "-" 不符合 OCI tag 规范，sed 去掉：
+  # adminmtan/domainsearch- → adminmtan/yuming
+  IMAGE_NAME: ${{ github.repository_owner }}/yuming
+  # bot 镜像用同 owner 不同名
+  IMAGE_NAME_BOT: ${{ github.repository_owner }}/yuming-bot
 
 jobs:
   test:
@@ -34,14 +40,13 @@ jobs:
         env:
           OPENAI_API_KEY: sk-test
         run: |
-          pytest tests/ -v --tb=short --ignore=tests/test_app.py || true
-          pytest tests/test_app.py -v --tb=short -k "not retry" || true
+          pytest tests/ -v --tb=short
 
   docker:
     name: Build & Push Docker Images
     runs-on: ubuntu-latest
     needs: test
-    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
     permissions:
       contents: read
       packages: write
@@ -90,7 +95,7 @@ jobs:
         id: meta-bot
         uses: docker/metadata-action@v5
         with:
-          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-bot
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME_BOT }}
           tags: |
             type=ref,event=branch
             type=sha,prefix=sha-

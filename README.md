@@ -83,6 +83,63 @@ python3 app.py
 pytest tests/ -v
 ```
 
+## NAS / 家庭服务器部署（Docker）
+
+镜像已自动构建并推送到 GitHub Container Registry：
+
+| 镜像 | 地址 |
+| --- | --- |
+| 主服务（Flask :5001） | `ghcr.io/adminmtan/yuming:latest` |
+| 微信推送服务（Node :5002） | `ghcr.io/adminmtan/yuming-bot:latest` |
+
+### 拉取 + 启动
+
+```bash
+# 1) 克隆本仓库（或仅下载 docker-compose.yml + .env.example）
+git clone https://github.com/adminmtan/domainsearch-.git
+cd domainsearch-
+
+# 2) 填入真实环境变量
+cp .env.example .env
+$EDITOR .env   # 必填 OPENAI_API_KEY
+
+# 3) 拉取镜像并启动
+docker compose pull
+docker compose up -d
+
+# 4) 查看状态
+docker compose ps
+docker compose logs -f yuming
+```
+
+访问 `http://<NAS-IP>:5001/` 即可。
+
+### 镜像标签说明
+
+每次 push 到 `main` 都会自动构建并打以下标签：
+
+- `latest` — main 分支最新构建
+- `main` — main 分支的 ref 标签
+- `sha-xxxxxxx` — 提交 hash 短码
+- `v1.2.3` / `1.2` — 推送 tag（`git tag v1.2.3 && git push --tags`）时生成
+
+固定到某个版本：
+
+```bash
+# 拉取指定 commit
+docker pull ghcr.io/adminmtan/yuming:sha-283d89e
+
+# 或在 docker-compose.yml 改 image: ...:sha-283d89e 后 docker compose up -d
+```
+
+### 手动触发 CI 重新构建
+
+GitHub 仓库 → Actions → CI → Run workflow，可不依赖 push 触发一次构建。
+
+### 平台支持
+
+镜像以 `linux/amd64,linux/arm64` 多架构构建，主流 NAS（群晖/威联通/极空间 x86 和 arm64 设备）均可直接拉取。
+
 ## 已知限制
 
 - 未做生产部署（仅 Flask 内置开发服务器）
