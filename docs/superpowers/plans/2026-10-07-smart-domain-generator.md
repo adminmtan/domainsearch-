@@ -14,18 +14,22 @@
 
 ## 文件结构
 
-| 文件 | 职责 |
-|------|------|
-| `app.py` | Flask 主服务：路由、参数校验、串联 generator/checker |
-| `generator.py` | OpenAI 域名生成器：构造 Prompt、解析 JSON 返回 |
-| `checker.py` | dmcheck.app API 客户端：批量查询域名状态 |
-| `static/index.html` | 主页面（描述、TLD、长度、数量输入 + 结果区 + 设置按钮） |
-| `static/style.css` | 全部样式 |
-| `static/app.js` | 前端逻辑（表单、API 调用、卡片渲染、localStorage 设置） |
-| `requirements.txt` | Python 依赖 |
-| `README.md` | 启动与使用说明 |
+
+| 文件                  | 职责                                     |
+| ------------------- | -------------------------------------- |
+| `app.py`            | Flask 主服务：路由、参数校验、串联 generator/checker |
+| `generator.py`      | OpenAI 域名生成器：构造 Prompt、解析 JSON 返回      |
+| `checker.py`        | dmcheck.app API 客户端：批量查询域名状态           |
+| `static/index.html` | 主页面（描述、TLD、长度、数量输入 + 结果区 + 设置按钮）       |
+| `static/style.css`  | 全部样式                                   |
+| `static/app.js`     | 前端逻辑（表单、API 调用、卡片渲染、localStorage 设置）   |
+| `requirements.txt`  | Python 依赖                              |
+| `README.md`         | 启动与使用说明                                |
+
 
 ---
+
+
 
 ## 全局约束
 
@@ -39,6 +43,8 @@
 - 所有 commit 使用 Conventional Commits（feat/fix/chore/test/docs）
 - 后端默认监听 `127.0.0.1:5000`
 
+
+
 ## 审查重点（Review Focus）
 
 规格隐含但未在测试中显式覆盖的输入/失败模式：
@@ -47,20 +53,23 @@
 2. **生成的域名全部已注册** → 后端必须返回可用数量 < count 时的明确提示，而不是返回空数组
 3. **dmcheck.app 接口变更/不可达** → 后端不应让前端挂在 loading，必须在 5 秒内超时并返回可读错误
 4. **用户描述为空或仅含空白** → 必须 400 拒绝，不调用 OpenAI（避免无意义扣费）
-6. **描述含敏感词/超长** → 后端在请求层做兜底校验，不完全依赖前端
+5. **描述含敏感词/超长** → 后端在请求层做兜底校验，不完全依赖前端
 
 每个审查重点对应测试已加在任务步骤中（任务 4、5、7）。
 
 ---
 
+
+
 ## 任务 1：项目骨架与依赖
 
 **文件：**
+
 - 创建：`requirements.txt`
 - 创建：`app.py`（最小 Flask 服务，仅 `/` 路由返回占位文本）
 - 创建：`README.md`（启动说明）
 
-- [ ] **步骤 1：编写 `requirements.txt`**
+- [ ] **步骤 1：编写** `requirements.txt`
 
 ```
 Flask==3.0.0
@@ -69,7 +78,7 @@ requests>=2.31.0
 pytest>=8.0.0
 ```
 
-- [ ] **步骤 2：创建最小 Flask 服务 `app.py`**
+- [ ] **步骤 2：创建最小 Flask 服务** `app.py`
 
 ```python
 from flask import Flask
@@ -92,14 +101,14 @@ flask --app flask run --host 127.0.0.1 --port 5000
 
 预期：浏览器访问 `http://127.0.0.1:5000/` 看到 "ok"
 
-- [ ] **步骤 4：在 `app.py` 添加开发服务器入口**
+- [ ] **步骤 4：在** `app.py` **添加开发服务器入口**
 
 ```python
 if __name__ == "__main__":
     app.run(host="127.0.0.1", port=5000, debug=True)
 ```
 
-- [ ] **步骤 5：创建 `README.md`**
+- [ ] **步骤 5：创建** `README.md`
 
 内容：项目简介、依赖安装、`python app.py` 启动、访问地址。
 
@@ -113,9 +122,12 @@ git commit -m "chore: scaffold flask app"
 
 ---
 
+
+
 ## 任务 2：域名生成器（generator.py）
 
 **文件：**
+
 - 创建：`generator.py`
 - 测试：`tests/test_generator.py`
 
@@ -204,7 +216,7 @@ pytest tests/test_generator.py -v
 
 预期：FAIL，`generator` 模块不存在
 
-- [ ] **步骤 3：实现 `generator.py`**
+- [ ] **步骤 3：实现** `generator.py`
 
 - `build_prompt`：返回 `[{"role": "system", ...}, {"role": "user", ...}]`，system 消息强调与用户核心的角色定位与"强相关性"要求，user 消息为模板化的具体需求。
 - Prompt 模板要点（来自规格）：
@@ -213,7 +225,7 @@ pytest tests/test_generator.py -v
   - 避免无意义字母组合
   - 理由必须含：域名构造拆解 + 与用户描述的关联点 + 寓意解读
   - 严格输出 JSON 数组
-- `parse_response`：先剥掉 ```json ... ``` 包裹，再用正则提取第一个 `[...]`，`json.loads`；失败抛 `ValueError`。
+- `parse_response`：先剥掉 `json ...`  包裹，再用正则提取第一个 `[...]`，`json.loads`；失败抛 `ValueError`。
 - `OpenAIGenerator.generate`：实际请求时 `count * 2`，`temperature=0.8`，`response_format={"type": "json_object"}` 可选；返回 `parse_response` 结果。
 
 - [ ] **步骤 4：运行测试验证通过**
@@ -233,9 +245,12 @@ git commit -m "feat(generator): OpenAI domain generator with prompt + parser"
 
 ---
 
+
+
 ## 任务 3：域名检测器（checker.py）
 
 **文件：**
+
 - 创建：`checker.py`
 - 测试：`tests/test_checker.py`
 
@@ -245,7 +260,7 @@ git commit -m "feat(generator): OpenAI domain generator with prompt + parser"
 from typing import Literal
 DomainStatus = Literal["available", "registered", "reserved", "unknown"]
 
-def check_domains(domains: list[str], tlds: list[str] | None = None,
+def check_domains(domains: list[str], tlds: list[str] | 无 = 无,
                   timeout: float = 5.0) -> dict[str, DomainStatus]:
     """调用 dmcheck.app 批量查询域名状态；返回 {domain: status}
     tlds 为 None 时只查传入的完整域名列表
@@ -266,7 +281,7 @@ def test_check_domains_parses_available():
     fake_resp.json.return_value = {
         "results": [{"domain": "foo.com", "status": "available"}]
     }
-    fake_resp.raise_for_status.return_value = None
+    fake_resp.raise_for_status.return_value = 无
     with patch("checker.requests.get", return_value=fake_resp):
         result = check_domains(["foo.com"])
     assert result == {"foo.com": "available"}
@@ -282,7 +297,7 @@ def test_check_domains_timeout_returns_unknown():
 def test_check_domains_dedupes_input():
     fake_resp = MagicMock()
     fake_resp.json.return_value = {"results": []}
-    fake_resp.raise_for_status.return_value = None
+    fake_resp.raise_for_status.return_value = 无
     with patch("checker.requests.get", return_value=fake_resp) as mock_get:
         check_domains(["foo.com", "foo.com", "bar.com"])
         # 验证只发了一次请求且去重后的域名
@@ -301,7 +316,7 @@ pytest tests/test_checker.py -v
 
 预期：FAIL，`checker` 模块不存在
 
-- [ ] **步骤 3：实现 `checker.py`**
+- [ ] **步骤 3：实现** `checker.py`
 
 - 对传入域名先去重
 - 使用 `requests.get(url, params={...}, timeout=timeout)`
@@ -326,9 +341,12 @@ git commit -m "feat(checker): dmcheck.app client with timeout fallback"
 
 ---
 
+
+
 ## 任务 4：Flask 后端 `/api/generate` 路由
 
 **文件：**
+
 - 修改：`app.py`
 - 测试：`tests/test_app.py`
 
@@ -342,6 +360,7 @@ def api_generate():
 ```
 
 **关键约束：**
+
 - `description` 为空或仅空白 → 400
 - `min_len >= max_len` → 400
 - `count < 1 or count > 50` → 400
@@ -393,7 +412,7 @@ pytest tests/test_app.py -v
 
 预期：FAIL，`/api/generate` 路由不存在
 
-- [ ] **步骤 3：在 `app.py` 中实现 `/api/generate`**
+- [ ] **步骤 3：在** `app.py` **中实现** `/api/generate`
 
 - 解析 JSON 字段，做参数校验（描述非空、长度范围合法、数量范围 1-50）
 - 构造 `OpenAIGenerator`，调用 `.generate(description, min_len, max_len, count * 2)`
@@ -420,9 +439,12 @@ git commit -m "feat(api): /api/generate route with validation and error handling
 
 ---
 
+
+
 ## 任务 5：TLD 列表端点 `/api/tlds`
 
 **文件：**
+
 - 修改：`app.py`
 - 测试：`tests/test_app.py`（追加）
 
@@ -457,7 +479,7 @@ pytest tests/test_app.py::test_tlds_returns_list -v
 
 预期：FAIL，`/api/tlds` 路由不存在
 
-- [ ] **步骤 3：在 `app.py` 中实现 `/api/tlds`**
+- [ ] **步骤 3：在** `app.py` **中实现** `/api/tlds`
 
 - 维护一个预置 TLD 列表常量 `DEFAULT_TLDS`（至少包含 `com io ai dev app net org co me xyz tech`）
 - 端点返回 `{tlds: DEFAULT_TLDS}`
@@ -480,14 +502,17 @@ git commit -m "feat(api): /api/tlds endpoint with preset list"
 
 ---
 
+
+
 ## 任务 6：前端骨架 `static/index.html`
 
 **文件：**
+
 - 创建：`static/index.html`
 - 创建：`static/style.css`
 - 创建：`static/app.js`
 
-- [ ] **步骤 1：编写 `static/index.html`**
+- [ ] **步骤 1：编写** `static/index.html`
 
 页面骨架：
 
@@ -532,9 +557,9 @@ git commit -m "feat(api): /api/tlds endpoint with preset list"
   <div id="settings-modal" class="modal hidden" role="dialog">
     <div class="modal-content">
       <h2>设置</h2>
-      <label>OpenAI API Key <input type="password" id="api-key"></label>
-      <label>Base URL <input type="text" id="base-url" value="https://api.openai.com/v1"></label>
-      <label>Model <input type="text" id="model" value="gpt-4o-mini"></label>
+      <label>OpenAI API 密钥 <input type="password" id="api-key"></label>
+      <label>基础 URL <input type="text" id="base-url" value="https://api.openai.com/v1"></label>
+      <label>模型 <input type="text" id="model" value="gpt-4o-mini"></label>
       <div class="modal-actions">
         <button id="settings-cancel">取消</button>
         <button id="settings-save">保存</button>
@@ -547,9 +572,10 @@ git commit -m "feat(api): /api/tlds endpoint with preset list"
 </html>
 ```
 
-- [ ] **步骤 2：编写 `static/style.css`**
+- [ ] **步骤 2：编写** `static/style.css`
 
 要点：
+
 - reset + system font
 - 居中布局，max-width 800px
 - 卡片阴影 + 圆角 8px
@@ -557,7 +583,7 @@ git commit -m "feat(api): /api/tlds endpoint with preset list"
 - modal 默认隐藏（`.hidden { display: none }`），覆盖层半透明黑色
 - 响应式：移动端表单纵向堆叠
 
-- [ ] **步骤 3：编写 `static/app.js`**
+- [ ] **步骤 3：编写** `static/app.js`
 
 实现以下功能：
 
@@ -606,6 +632,7 @@ loadTlds();
 ```
 
 **生成按钮处理逻辑要点：**
+
 1. 检查 `description.value.trim()` 非空 → 否则提示
 2. 检查 localStorage 已有 `api_key` → 否则提示打开设置
 3. 收集所有选中 TLD
@@ -623,6 +650,7 @@ python app.py
 ```
 
 手动检查项：
+
 - 页面渲染正常
 - TLD 列表从后端加载并显示
 - 设置按钮打开/关闭 modal
@@ -637,9 +665,12 @@ git commit -m "feat(ui): main page with form, settings modal, results area"
 
 ---
 
+
+
 ## 任务 7：端到端验证与文档
 
 **文件：**
+
 - 修改：`README.md`
 
 - [ ] **步骤 1：手动跑通完整流程**
@@ -652,10 +683,10 @@ git commit -m "feat(ui): main page with form, settings modal, results area"
 6. 长度 4-12，数量 10
 7. 点击生成，等待结果
 8. 确认：
-   - 域名与描述有可识别的关联
-   - 已注册域名被过滤
-   - 每个域名有推荐理由
-   - 卡片显示可注册状态
+  - 域名与描述有可识别的关联
+  - 已注册域名被过滤
+  - 每个域名有推荐理由
+  - 卡片显示可注册状态
 
 - [ ] **步骤 2：跑完整测试**
 
@@ -665,9 +696,10 @@ pytest tests/ -v
 
 预期：所有测试 PASS
 
-- [ ] **步骤 3：补充 `README.md`**
+- [ ] **步骤 3：补充** `README.md`
 
 内容：
+
 - 项目简介
 - 截图占位
 - 安装：`pip install -r requirements.txt`
@@ -685,29 +717,35 @@ git commit -m "docs: usage instructions and limitations"
 
 ---
 
+
+
 ## 自检结果
 
 **1. 规格覆盖度：**
 
-| 规格章节 | 任务 |
-|---------|------|
-| 主界面 / 设置弹窗 / 域名卡片 | 任务 6 |
-| generator.py + Prompt 模板 | 任务 2 |
-| checker.py + dmcheck.app | 任务 3 |
-| /api/generate + /api/tlds | 任务 4、5 |
-| 数据流 | 任务 4 |
-| 错误处理（API Key 未配置、rate limit、JSON 解析、dmcheck 不可达、可用数 < count） | 任务 4 |
-| 安全（API Key 仅前端） | 任务 6 |
-| 测试策略 | 任务 2、3、4、5、7 |
+
+| 规格章节                                                         | 任务           |
+| ------------------------------------------------------------ | ------------ |
+| 主界面 / 设置弹窗 / 域名卡片                                            | 任务 6         |
+| generator.py + Prompt 模板                                     | 任务 2         |
+| checker.py + dmcheck.app                                     | 任务 3         |
+| /api/generate + /api/tlds                                    | 任务 4、5       |
+| 数据流                                                          | 任务 4         |
+| 错误处理（API Key 未配置、rate limit、JSON 解析、dmcheck 不可达、可用数 < count） | 任务 4         |
+| 安全（API Key 仅前端）                                              | 任务 6         |
+| 测试策略                                                         | 任务 2、3、4、5、7 |
+
 
 **2. 步骤扫描：** 每个步骤只有一个明确动作；代码块只含签名/接口/测试，不重复实现。
 
 **3. 类型一致性：**
+
 - `DomainCandidate` 在任务 2 定义、任务 4 消费，一致
 - `check_domains` 返回 `dict[str, DomainStatus]`，任务 4 消费时按 `available` 过滤
 - `api_generate` 请求/响应字段与规格一致
 
 **4. 审查重点：**
+
 1. AI 返回非 JSON → 任务 2 `test_parse_response_*`
 2. 全部已注册 → 任务 4 处理逻辑（过滤后 available < count 仍响应）+ 任务 6 前端展示
 3. dmcheck 不可达 → 任务 3 `test_check_domains_timeout_returns_unknown`
