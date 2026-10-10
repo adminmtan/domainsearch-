@@ -11,8 +11,12 @@ from openai import OpenAI
 from openai import AuthenticationError as OpenAIAuthenticationError
 from openai import APIConnectionError as OpenAIAPIConnectionError
 
-from generator import OpenAIGenerator
-from checker import check_domains, check_domains_with_errors
+from generator import OpenAIGenerator, VALID_STYLES
+from checker import (
+    check_domains,
+    check_domains_with_errors,
+    retry_unknown_domains,
+)
 import wechat_pusher
 
 app = Flask(__name__, static_folder="static", static_url_path="/static")
@@ -130,10 +134,20 @@ def api_generate():
     if not isinstance(tlds, list) or not tlds or not all(isinstance(t, str) for t in tlds):
         return _bad_request("TLD 列表非法")
 
+    # 域名字符风格校验（可选；默认 "letters"）
+    domain_style = data.get("domain_style") or "letters"
+    if domain_style not in VALID_STYLES:
+        return _bad_request(
+            f"domain_style 非法，应为 {' / '.join(VALID_STYLES)} 之一"
+        )
+
     try:
         gen = OpenAIGenerator(api_key=api_key, base_url=base_url, model=model)
         # Generate 2x candidates to give us filter headroom
-        candidates = gen.generate(description, min_len, max_len, count * 2)
+        candidates = gen.generate(
+            description, min_len, max_len, count * 2,
+            domain_style=domain_style,
+        )
     except Exception as e:
         return jsonify({"success": False, "error": f"OpenAI 调用失败：{e}"}), 500
 
@@ -640,6 +654,11 @@ def api_generate_stream():
         return _bad_request("数量必须为 1-50 的整数")
     if not isinstance(tlds, list) or not tlds or not all(isinstance(t, str) for t in tlds):
         return _bad_request("TLD 列表非法")
+    domain_style = data.get("domain_style") or "letters"
+    if domain_style not in VALID_STYLES:
+        return _bad_request(
+            f"domain_style 非法，应为 {' / '.join(VALID_STYLES)} 之一"
+        )
 
     # 为本次任务创建 stop 事件
     job_id = f"job-{int(time.time()*1000)}-{os.urandom(4).hex()}"
@@ -713,7 +732,8 @@ def api_generate_stream():
 
                 try:
                     new_candidates = gen.generate(
-                        description, min_len, max_len, BATCH_SIZE
+                        description, min_len, max_len, BATCH_SIZE,
+                        domain_style=domain_style,
                     )
                 except Exception as e:
                     yield _sse("error", {
@@ -850,6 +870,66 @@ def api_generate_stream():
                     "elapsed": round(time.time() - batch_t0, 2),
                 })
 
+                # 原地重试：仅对 unknown 域名（节省调用，dmcheck 抖动常见）。
+                # 显式传入 check_domains_with_errors（与初次检测同函数），
+                # 便于测试 mock 上层时同时覆盖 retry 路径。
+                unknown_domains = [
+                    d for d, s in statuses.items() if s == "unknown"
+                ]
+                if unknown_domains and len(available) < count:
+                    retry_t0 = time.time()
+                    new_statuses, new_errors, attempts = retry_unknown_domains(
+                        unknown_domains, timeout=5.0,
+                        check_fn=check_domains_with_errors,
+                    )
+                    retry_took = round((time.time() - retry_t0) * 1000, 1)
+                    yield _sse("retry_in_place", {
+                        "n": batch_no,
+                        "domains": unknown_domains,
+                        "attempts": attempts,
+                        "took_ms": retry_took,
+                        "recovered": [
+                            d for d, s in new_statuses.items()
+                            if s != "unknown"
+                        ],
+                        "still_unknown": [
+                            d for d, s in new_statuses.items()
+                            if s == "unknown"
+                        ],
+                    })
+                    # 收下可救回的可注册域名
+                    for full, status in new_statuses.items():
+                        if status != "available":
+                            continue
+                        # 可能在 fresh 里（已在上面处理过），跳过
+                        if any(a["domain"] == full for a in available):
+                            continue
+                        cand = full_to_cand.get(full)
+                        if not cand:
+                            continue
+                        domain_entry = {
+                            "domain": full,
+                            "reason": cand["reason"],
+                            "length": len(cand["domain"]),
+                            "tld": full.split(".", 1)[1],
+                            "status": "available",
+                        }
+                        available.append(domain_entry)
+                        if wechat_pusher.is_configured():
+                            push_data = wechat_pusher.push_new_domain(
+                                domain_entry,
+                                total_now=len(available),
+                                requested=count,
+                                peer_ids=push_peer_ids,
+                            )
+                            yield _sse("wechat_pushed", {
+                                **push_data,
+                                "phase": "retry",
+                                "domain": domain_entry["domain"],
+                            })
+                        if len(available) >= count:
+                            break
+
             # 截断（理论上不会超，但保险）
             available = available[:count]
 
@@ -861,13 +941,9 @@ def api_generate_stream():
                 "elapsed": round(time.time() - t_start, 2),
                 "ts": time.time(),
             }
-            yield _sse("done", {
-                "domains": available,
-                "stats": stats,
-                "elapsed": stats["elapsed"],
-            })
 
             # 微信最终推送：写 MD + HTML 报告 + 推链接到所有目标联系人
+            # （"done" 是用户面向的最后信号；detail 事件先发）
             if wechat_pusher.is_configured():
                 report_info = _save_report(job_id, description, available, stats)
                 report_url = request.host_url.rstrip("/") + report_info["html_url"]
@@ -887,6 +963,13 @@ def api_generate_stream():
                     "phase": "final",
                     "report_url": report_url,
                 })
+
+            # done 放在所有收尾事件之后（用户视角的"完成信号"必须是最后一个）
+            yield _sse("done", {
+                "domains": available,
+                "stats": stats,
+                "elapsed": stats["elapsed"],
+            })
         except Exception as e:
             # 系统异常退出推送
             elapsed = round(time.time() - t_start, 2) if 't_start' in locals() else 0

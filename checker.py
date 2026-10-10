@@ -147,10 +147,12 @@ def retry_unknown_domains(
     timeout: float = REQUEST_TIMEOUT,
     delays: tuple[float, ...] = IN_PLACE_RETRY_DELAYS_S,
     sleep: "callable" = time.sleep,
+    tlds: list[str] | None = None,
+    check_fn: "callable" = check_domains_with_errors,
 ) -> tuple[dict[str, DomainStatus], dict[str, str], int]:
     """对一组域名做原地重试，只针对 status == "unknown" 的域名。
 
-    每个 (domain, delay) 独立调用一次 ``_check_one`` 并行发起；
+    每个 (domain, delay) 独立调用一次 ``check_fn`` 并行发起；
     每个 delay 前先 ``sleep(delay)``，作为退避。
 
     Args:
@@ -158,6 +160,10 @@ def retry_unknown_domains(
         timeout: 每次请求超时
         delays:  重试前等待时长元组（长度 = 最大重试次数）
         sleep:   注入用的 sleep 函数，便于测试时禁用
+        tlds:    透传给 check_fn（默认 None）
+        check_fn: 注入的检测函数（默认 check_domains_with_errors），
+                 便于测试时 mock（app.py 会传 app.check_domains_with_errors
+                 以便测试 mock 上层时同时覆盖 retry 路径）
 
     Returns:
         (new_statuses, new_errors, attempts_performed) where:
@@ -177,24 +183,19 @@ def retry_unknown_domains(
         attempts += 1
         if not pending:
             break
-        with ThreadPoolExecutor(
-            max_workers=min(MAX_WORKERS, len(pending))
-        ) as ex:
-            future_to_domain = {
-                ex.submit(_check_one, d, timeout): d for d in pending
-            }
-            for fut in as_completed(future_to_domain):
-                d = future_to_domain[fut]
-                try:
-                    status, err = fut.result()
-                except Exception as e:  # never let one bad domain kill the batch
-                    status, err = "unknown", f"worker error: {type(e).__name__}: {e}"
-                new_statuses[d] = status
-                if err:
-                    new_errors[d] = err
-                else:
-                    # 成功的清除旧 unknown 错误（如果有）
-                    new_errors.pop(d, None)
+        # 走注入的 check_fn（与初次检测同路径），便于测试 mock 统一
+        rt_statuses, rt_errors = check_fn(
+            pending, tlds=tlds, timeout=timeout,
+        )
+        for d in pending:
+            status = rt_statuses.get(d, "unknown")
+            new_statuses[d] = status
+            err = rt_errors.get(d)
+            if err:
+                new_errors[d] = err
+            else:
+                # 成功的清除旧 unknown 错误（如果有）
+                new_errors.pop(d, None)
         # 本轮已解析的不进入下一轮（节省调用）
         pending = [d for d in pending if new_statuses.get(d, "unknown") == "unknown"]
 

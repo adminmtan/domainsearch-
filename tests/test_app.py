@@ -317,7 +317,7 @@ def test_stream_stops_when_count_reached(monkeypatch):
     gen_calls = {"n": 0}
     class _G:
         def __init__(self, *a, **kw): pass
-        def generate(self, description, min_len, max_len, count):
+        def generate(self, *a, **kw):
             gen_calls["n"] += 1
             return [{"domain": f"d{gen_calls['n']}", "reason": "r"}]
 
@@ -350,7 +350,7 @@ def test_stream_retries_when_no_available(monkeypatch):
     gen_calls = {"n": 0}
     class _G:
         def __init__(self, *a, **kw): pass
-        def generate(self, description, min_len, max_len, count):
+        def generate(self, *a, **kw):
             gen_calls["n"] += 1
             return [{"domain": f"d{gen_calls['n']}", "reason": "r"}]
 
@@ -413,7 +413,7 @@ def test_stream_emits_log_events_in_order(monkeypatch):
     """验证事件顺序：start → batch_start → api_call → api_result → batch_done → done。"""
     class _G:
         def __init__(self, *a, **kw): pass
-        def generate(self, description, min_len, max_len, count):
+        def generate(self, *a, **kw):
             return [{"domain": "alpha", "reason": "r"}]
     monkeypatch.setattr("app.OpenAIGenerator", lambda **kw: _G())
     monkeypatch.setattr(
@@ -443,7 +443,7 @@ def test_stream_dedupes_candidates_across_batches(monkeypatch):
     call_count = {"n": 0}
     class _G:
         def __init__(self, *a, **kw): pass
-        def generate(self, description, min_len, max_len, count):
+        def generate(self, *a, **kw):
             call_count["n"] += 1
             # 第 1 批：alpha（已注册）
             # 第 2 批：alpha（重复）+ beta（可注册）→ 终止
@@ -483,7 +483,7 @@ def test_stream_api_call_includes_url_and_model(monkeypatch):
     """用户要求日志体现接口/API：api_call 事件必须含 url 和 model。"""
     class _G:
         def __init__(self, *a, **kw): pass
-        def generate(self, description, min_len, max_len, count):
+        def generate(self, *a, **kw):
             return [{"domain": "alpha", "reason": "r"}]
     monkeypatch.setattr("app.OpenAIGenerator", lambda **kw: _G())
     monkeypatch.setattr(
@@ -516,7 +516,7 @@ def test_stream_api_result_includes_per_domain_status(monkeypatch):
     call_count = {"n": 0}
     class _G:
         def __init__(self, *a, **kw): pass
-        def generate(self, description, min_len, max_len, count):
+        def generate(self, *a, **kw):
             call_count["n"] += 1
             # 第 1 批：alpha+beta；alpha 可注册，beta 已注册
             # 第 2 批：alpha 重复 + beta 重复 + gamma 新 → gamma 可注册 → 累计 2 个
@@ -574,7 +574,7 @@ def test_stream_retries_unknown_domains_in_place(monkeypatch):
     gen_calls = {"n": 0}
     class _G:
         def __init__(self, *a, **kw): pass
-        def generate(self, description, min_len, max_len, count):
+        def generate(self, *a, **kw):
             gen_calls["n"] += 1
             # 第 1 批只有 b.com 一个候选
             return [{"domain": "b", "reason": "r"}]
@@ -612,12 +612,9 @@ def test_stream_retries_unknown_domains_in_place(monkeypatch):
 
     monkeypatch.setattr("app.OpenAIGenerator", lambda **kw: _G())
     monkeypatch.setattr("app.check_domains_with_errors", fake_check)
-    # mock retry_unknown_domains 本身，避免真实 HTTP 请求。
-    # app 里调用形式：retry_unknown_domains(unknown_domains, timeout=5.0)
-    # 不传 delays / sleep，所以 mock 要兼容关键字可选。
-    def fake_retry_b(domains, *, timeout, **kwargs):
-        return {d: "available" for d in domains}, {d: "" for d in domains}, 1
-    monkeypatch.setattr("app.retry_unknown_domains", fake_retry_b)
+    # 不 mock retry_unknown_domains：让真实函数走，它内部已调
+    # check_domains_with_errors（mocked above）记录到 calls_log。
+    # 真实 attempts=2 (1.0s + 3.0s 退避各 1 次) 满足 retries[0]["attempts"] >= 2 断言。
     client = app.test_client()
     resp = client.post("/api/generate-stream", json={
         "description": "x", "min_len": 4, "max_len": 10,
@@ -646,7 +643,7 @@ def test_stream_keeps_unknown_after_max_retries_and_continues(monkeypatch):
     gen_calls = {"n": 0}
     class _G:
         def __init__(self, *a, **kw): pass
-        def generate(self, description, min_len, max_len, count):
+        def generate(self, *a, **kw):
             gen_calls["n"] += 1
             if gen_calls["n"] == 1:
                 return [{"domain": "stuck", "reason": "r"}]
@@ -668,10 +665,9 @@ def test_stream_keeps_unknown_after_max_retries_and_continues(monkeypatch):
 
     monkeypatch.setattr("app.OpenAIGenerator", lambda **kw: _G())
     monkeypatch.setattr("app.check_domains_with_errors", fake_check)
-    # mock retry：stuck.com 仍 unknown（用完重试次数仍 unknown）
-    def fake_retry_stuck(domains, *, timeout, **kwargs):
-        return {d: "unknown" for d in domains}, {d: "timeout after 5.0s" for d in domains}, 1
-    monkeypatch.setattr("app.retry_unknown_domains", fake_retry_stuck)
+    # 不 mock retry_unknown_domains：让真实函数走 check_domains_with_errors
+    # （mocked above），retry 两次 fake_check 都返 unknown → 真实 attempts=2，
+    # stuck.com 仍 unknown 满足后续断言。
     client = app.test_client()
     resp = client.post("/api/generate-stream", json={
         "description": "x", "min_len": 4, "max_len": 10,
@@ -694,7 +690,7 @@ def test_stream_retry_attempts_capped_at_max(monkeypatch):
 
     class _G:
         def __init__(self, *a, **kw): pass
-        def generate(self, description, min_len, max_len, count):
+        def generate(self, *a, **kw):
             return [{"domain": "x", "reason": "r"}]
 
     calls_log = []
@@ -704,10 +700,9 @@ def test_stream_retry_attempts_capped_at_max(monkeypatch):
 
     monkeypatch.setattr("app.OpenAIGenerator", lambda **kw: _G())
     monkeypatch.setattr("app.check_domains_with_errors", fake_check)
-    # mock retry：stuck.com 仍 unknown（用完重试次数仍 unknown）
-    def fake_retry_stuck(domains, *, timeout, **kwargs):
-        return {d: "unknown" for d in domains}, {d: "timeout after 5.0s" for d in domains}, 1
-    monkeypatch.setattr("app.retry_unknown_domains", fake_retry_stuck)
+    # 不 mock retry_unknown_domains：让真实函数走 check_domains_with_errors
+    # （mocked above），retry 两次 fake_check 都返 unknown → 真实 attempts=2，
+    # stuck.com 仍 unknown 满足后续断言。
     client = app.test_client()
     # 用 count=1 + 一批后退出条件，但 unknown 不会被记入 available。
     # 我们通过 monkeypatch 限制打满循环。这里只验证 x.com 被检查次数。
