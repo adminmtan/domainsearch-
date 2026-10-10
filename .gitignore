@@ -6,3 +6,9 @@ __pycache__/
 .DS_Store
 .superpowers/
 *.log
+# 运行时生成的报告产物
+static/reports/*.html
+static/reports/*.md
+
+# Node.js 依赖
+**/node_modules/
