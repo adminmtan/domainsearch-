@@ -18,6 +18,8 @@ from checker import (
     retry_unknown_domains,
 )
 import wechat_pusher
+from version import get_version, is_newer, GITHUB_OWNER, GITHUB_REPO, DOCKER_IMAGE
+import updater
 
 app = Flask(__name__, static_folder="static", static_url_path="/static")
 
@@ -1057,6 +1059,56 @@ def api_wechat_send():
     result = wechat_pusher.send_message(peer_id, text)
     status = 200 if result.get("ok") else 400
     return jsonify(result), status
+
+
+# ---------------------------------------------------------------------------
+# 版本 / 在线更新
+# ---------------------------------------------------------------------------
+
+@app.route("/api/version", methods=["GET"])
+def api_version():
+    """返回当前版本 + 环境信息（前端 footer 用）。"""
+    return jsonify({
+        "version": get_version(),
+        "github": {
+            "owner": GITHUB_OWNER,
+            "repo": GITHUB_REPO,
+            "url": f"https://github.com/{GITHUB_OWNER}/{GITHUB_REPO}",
+        },
+        "environment": updater.detect_environment(),
+    })
+
+
+@app.route("/api/update/check", methods=["GET"])
+def api_update_check():
+    """查询 GitHub Releases，判断是否有新版本。
+
+    缓存 5 分钟（避免每次刷新都打 GitHub）。
+    失败不报错：返回 ok=False + reason；前端仅在 ok=True 且 update_available=True 时提示。
+    """
+    current = get_version()
+    result = updater.check_for_update(current, force=False)
+    return jsonify(result)
+
+
+@app.route("/api/update/apply", methods=["POST"])
+def api_update_apply():
+    """触发自我更新（仅 Docker + 挂载了 docker socket 的部署才支持）。
+
+    非支持环境返回 {ok: false, reason: ..., steps: [...]}，前端引导用户手动执行。
+    """
+    data = request.get_json(silent=True) or {}
+    target = (data.get("target") or "").strip() or None
+    return jsonify(updater.apply_update(target=target))
+
+
+@app.route("/api/update/log", methods=["GET"])
+def api_update_log():
+    """返回后台更新脚本的日志末尾 + 是否完成，供前端 toast 轮询。"""
+    return jsonify({
+        "log": updater.get_update_log_tail(),
+        "done": updater.is_update_done(),
+    })
 
 
 if __name__ == "__main__":

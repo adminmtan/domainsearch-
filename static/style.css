@@ -1451,3 +1451,166 @@ textarea::placeholder { color: var(--fg-dim); }
   .action-row { flex-direction: column; }
   .action-row .btn { width: 100%; justify-content: center; }
 }
+
+/* ── App Footer (bottom-left version) ─────────────────────── */
+.app-footer {
+  position: fixed;
+  left: 16px;
+  bottom: 12px;
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  font-size: 12px;
+  font-family: var(--font-mono);
+  color: var(--fg-dim);
+  background: rgba(15, 23, 42, 0.6);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  user-select: none;
+  pointer-events: auto;
+  transition: color .2s, border-color .2s;
+}
+.app-footer:hover { color: var(--fg-muted); }
+.app-footer-sep { color: var(--fg-dim); }
+.app-footer-update {
+  background: var(--accent);
+  color: #0f1115;
+  border: none;
+  border-radius: 999px;
+  padding: 3px 10px;
+  font-size: 11px;
+  font-weight: 600;
+  font-family: var(--font-sans);
+  cursor: pointer;
+  animation: pulse-glow 2s infinite;
+  transition: transform .15s;
+}
+.app-footer-update:hover { transform: scale(1.05); }
+.app-footer-update:active { transform: scale(0.97); }
+.app-footer-update.hidden { display: none; }
+
+/* ── Update Toast (top-right, persistent) ──────────────────── */
+.update-toast {
+  position: fixed;
+  top: 72px;
+  right: 16px;
+  z-index: 100;
+  max-width: 360px;
+  background: var(--bg-card);
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-md);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4),
+              0 0 0 3px var(--accent-glow);
+  font-family: var(--font-sans);
+  animation: scaleIn .3s var(--ease-spring);
+}
+.update-toast.hidden { display: none; }
+.update-toast-body {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 16px;
+}
+.update-toast-icon {
+  font-size: 24px;
+  line-height: 1;
+  flex-shrink: 0;
+}
+.update-toast-text { flex: 1; min-width: 0; }
+.update-toast-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--fg);
+  line-height: 1.4;
+}
+.update-toast-title span {
+  color: var(--accent);
+  font-family: var(--font-mono);
+  margin-left: 4px;
+}
+.update-toast-sub {
+  font-size: 12px;
+  color: var(--fg-muted);
+  margin-top: 2px;
+}
+.update-toast-actions {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+  flex-shrink: 0;
+}
+.update-toast-btn {
+  background: var(--accent);
+  color: #0f1115;
+  border: none;
+  border-radius: 6px;
+  padding: 6px 12px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: transform .15s, background .15s;
+  font-family: var(--font-sans);
+  white-space: nowrap;
+}
+.update-toast-btn:hover { background: var(--accent-dark); }
+.update-toast-btn:active { transform: scale(0.97); }
+.update-toast-btn:disabled {
+  background: var(--fg-dim);
+  color: var(--bg);
+  cursor: not-allowed;
+}
+.update-toast-btn-ghost {
+  background: transparent;
+  color: var(--fg-muted);
+  border: none;
+  padding: 4px 8px;
+  font-size: 14px;
+  cursor: pointer;
+  border-radius: 4px;
+  transition: color .15s, background .15s;
+}
+.update-toast-btn-ghost:hover {
+  color: var(--fg);
+  background: var(--bg-elevated);
+}
+.update-toast-log {
+  margin: 0;
+  padding: 10px 16px 12px;
+  border-top: 1px solid var(--border);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--fg-muted);
+  background: var(--bg);
+  border-bottom-left-radius: var(--radius-md);
+  border-bottom-right-radius: var(--radius-md);
+  max-height: 160px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+.update-toast-log.hidden { display: none; }
+.update-toast.error {
+  border-color: var(--danger);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4),
+              0 0 0 3px rgba(239, 68, 68, 0.25);
+}
+.update-toast.success { border-color: var(--accent); }
+
+@media (max-width: 640px) {
+  .update-toast {
+    top: auto;
+    bottom: 64px;
+    left: 12px;
+    right: 12px;
+    max-width: none;
+  }
+  .app-footer {
+    bottom: 8px;
+    left: 8px;
+    font-size: 11px;
+  }
+}

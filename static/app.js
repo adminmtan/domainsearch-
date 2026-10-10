@@ -1256,6 +1256,9 @@ function init() {
     // 初始 main section 走 CSS-only 入场动画（不依赖 JS）
     // Ripple effect for all .btn / .header-btn
     document.querySelectorAll('.btn, .header-btn').forEach(attachRipple);
+    initVersionFooter();
+    initUpdateToast();
+    checkForUpdates(); // 启动后异步检查，有新版本就弹 toast
     $settingsBtn.addEventListener("click", openSettings);
     $settingsCancel.addEventListener("click", hideSettings);
     $settingsSave.addEventListener("click", () => {
@@ -1319,4 +1322,189 @@ try {
 } catch (e) {
   // init 内部已打印并显示错误；这里再保险一次
   console.error("[yuming] init outer catch:", e);
+}
+
+// ═══════════════════════════════════════════════════════════════
+// 版本管理 & 在线更新
+// ═══════════════════════════════════════════════════════════════
+
+let __versionInfo = null;     // {version, github, environment}
+let __updateCheck = null;     // {ok, current, latest, update_available, ...}
+let __updateLogPollTimer = null;
+let __updateDismissed = false; // 本次 session 是否点过"关闭"
+
+async function initVersionFooter() {
+  const $ver = document.getElementById("app-footer-version");
+  if (!$ver) return;
+  try {
+    const data = await fetchJson("/api/version");
+    __versionInfo = data;
+    $ver.textContent = `Yu·ming v${data.version}`;
+    $ver.title = `GitHub: ${data.github.url}\n环境: ${data.environment.in_docker ? "Docker" : "宿主机"}`;
+  } catch (e) {
+    $ver.textContent = "Yu·ming";
+    console.warn("[version] load failed:", e);
+  }
+}
+
+function initUpdateToast() {
+  const toast = document.getElementById("update-toast");
+  if (!toast) return;
+  document.getElementById("update-toast-dismiss").addEventListener("click", () => {
+    toast.classList.add("hidden");
+    __updateDismissed = true;
+  });
+  document.getElementById("update-toast-action").addEventListener("click", onUpdateActionClick);
+  // 左下角版本旁的"立即更新"按钮也走同一个 handler
+  const $footerBtn = document.getElementById("app-update-btn");
+  if ($footerBtn) $footerBtn.addEventListener("click", onUpdateActionClick);
+}
+
+async function checkForUpdates(force = false) {
+  if (__updateDismissed) return;
+  try {
+    const data = await fetchJson(force ? "/api/update/check?force=1" : "/api/update/check");
+    __updateCheck = data;
+    if (!data || !data.ok) {
+      console.debug("[update] check skipped:", data && data.reason);
+      return;
+    }
+    if (data.update_available) {
+      showUpdateToast(data);
+    }
+  } catch (e) {
+    console.debug("[update] check failed:", e);
+  }
+}
+
+function showUpdateToast(data) {
+  const toast = document.getElementById("update-toast");
+  if (!toast) return;
+  document.getElementById("update-toast-version").textContent = data.latest || "新版";
+  const sub = document.getElementById("update-toast-sub");
+  // 主版本（第一位）变更 → 提示用户需手动确认
+  const currentMajor = parseSemverMajor(data.current);
+  const latestMajor = parseSemverMajor(data.latest);
+  if (latestMajor > currentMajor) {
+    sub.textContent = "主版本升级，建议查看 Release Notes 后手动更新";
+    sub.style.color = "var(--warning)";
+  } else {
+    sub.textContent = "点击右侧按钮立即更新";
+    sub.style.color = "";
+  }
+  toast.classList.remove("hidden", "error", "success");
+  // 左下角小按钮也亮起来
+  const $footerBtn = document.getElementById("app-update-btn");
+  if ($footerBtn) $footerBtn.classList.remove("hidden");
+}
+
+function parseSemverMajor(v) {
+  if (!v) return 0;
+  const m = String(v).replace(/^v/, "").match(/^(\d+)/);
+  return m ? parseInt(m[1], 10) : 0;
+}
+
+async function onUpdateActionClick() {
+  const data = __updateCheck;
+  if (!data || !data.update_available) {
+    // 兜底再 check 一次
+    await checkForUpdates(true);
+    return;
+  }
+  // 主版本变更 → 引导用户去 GitHub 页面确认（按需求不自动升级大版本）
+  if (parseSemverMajor(data.latest) > parseSemverMajor(data.current)) {
+    const go = confirm(
+      `检测到主版本升级（${data.current} → ${data.latest}）。\n\n` +
+      `按项目规则，主版本需手动确认。\n` +
+      `是否打开 Release Notes 查看变更？`,
+    );
+    if (go && data.url) window.open(data.url, "_blank", "noopener");
+    return;
+  }
+
+  // 小版本 → 一键更新
+  const toast = document.getElementById("update-toast");
+  const $action = document.getElementById("update-toast-action");
+  const $log = document.getElementById("update-toast-log");
+  $action.disabled = true;
+  $action.textContent = "更新中…";
+  toast.classList.remove("error");
+  $log.classList.remove("hidden");
+  $log.textContent = "正在提交更新任务…\n";
+
+  try {
+    const resp = await fetchJson("/api/update/apply", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ target: stripVerPrefix(data.latest) }),
+    });
+
+    if (!resp.ok) {
+      // 手动更新模式：把步骤给用户看
+      if (resp.mode === "manual_required") {
+        $action.disabled = false;
+        $action.textContent = "关闭";
+        toast.classList.add("error");
+        const steps = (resp.steps || []).join("\n");
+        $log.textContent = `${resp.reason || "需要手动更新"}\n\n${steps}`;
+        $action.onclick = () => {
+          toast.classList.add("hidden");
+          __updateDismissed = true;
+        };
+        return;
+      }
+      throw new Error(resp.reason || "更新失败");
+    }
+
+    // 后台模式：轮询日志，done 后刷新页面
+    $log.textContent = resp.message || "后台更新已启动…\n";
+    startUpdateLogPolling();
+  } catch (e) {
+    $action.disabled = false;
+    $action.textContent = "重试";
+    toast.classList.add("error");
+    $log.textContent = `更新失败：${e.message}`;
+  }
+}
+
+function stripVerPrefix(v) {
+  return v ? String(v).replace(/^v/, "") : "";
+}
+
+function startUpdateLogPolling() {
+  if (__updateLogPollTimer) clearInterval(__updateLogPollTimer);
+  const $log = document.getElementById("update-toast-log");
+  const $action = document.getElementById("update-toast-action");
+  let attempts = 0;
+  const MAX_ATTEMPTS = 60; // ~2 分钟（每 2s 一次）
+
+  __updateLogPollTimer = setInterval(async () => {
+    attempts++;
+    try {
+      const data = await fetchJson("/api/update/log");
+      if (data.log) $log.textContent = data.log;
+      if (data.done) {
+        clearInterval(__updateLogPollTimer);
+        __updateLogPollTimer = null;
+        $action.textContent = "即将刷新";
+        $action.disabled = true;
+        $log.textContent += "\n✓ 更新完成，3 秒后自动刷新…\n";
+        setTimeout(() => location.reload(), 3000);
+        return;
+      }
+      if (attempts >= MAX_ATTEMPTS) {
+        clearInterval(__updateLogPollTimer);
+        __updateLogPollTimer = null;
+        $action.disabled = false;
+        $action.textContent = "关闭";
+        $action.onclick = () => {
+          document.getElementById("update-toast").classList.add("hidden");
+          __updateDismissed = true;
+        };
+      }
+    } catch (e) {
+      // 网络可能断（容器在重启），继续轮
+      console.debug("[update] poll error (容器可能正在重启):", e);
+    }
+  }, 2000);
 }
