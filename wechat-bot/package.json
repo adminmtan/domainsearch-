@@ -1,0 +1,16 @@
+{
+  "name": "yuming-wechat-bot",
+  "version": "0.1.0",
+  "description": "微信扫码登录 + 消息推送服务（给智能域名生成器用）",
+  "main": "src/server.js",
+  "type": "module",
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "node --watch src/server.js"
+  },
+  "dependencies": {
+    "express": "^4.21.1",
+    "cors": "^2.8.5",
+    "wechat-channel": "^1.0.0"
+  }
+}

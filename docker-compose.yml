@@ -1,0 +1,78 @@
+version: "3.8"
+
+# 智能域名生成器 + 微信推送服务（NAS / 家庭服务器部署）
+#
+# 架构：
+#   Flask :5001  -> 主服务（生成域名）
+#   Bot   :5002  -> 微信扫码登录 + 消息推送（Node.js + wechat-channel）
+#
+# 用法：
+#   1) cp .env.example .env 并填入 OPENAI_API_KEY 等
+#   2) mkdir -p data/wechannel  # 微信登录状态持久化目录
+#   3) docker compose up -d
+#   4) 访问 http://<NAS-IP>:5001
+
+services:
+  yuming:
+    build: .
+    image: ghcr.io/${GITHUB_REPOSITORY:-mtan/p-yuming}:latest
+    container_name: yuming
+    restart: unless-stopped
+    ports:
+      - "5001:5001"
+    env_file:
+      - .env
+    environment:
+      - WECHAT_BOT_URL=http://yuming-bot:5002
+      - WECHAT_BOT_TOKEN=${WECHAT_BOT_TOKEN:-dev-token-change-me}
+      - FLASK_ENV=production
+    depends_on:
+      yuming-bot:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request, sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:5001/').status == 200 else 1)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  yuming-bot:
+    build:
+      context: ./wechat-bot
+      dockerfile: Dockerfile
+    container_name: yuming-bot
+    restart: unless-stopped
+    working_dir: /app
+    ports:
+      - "5002:5002"
+    env_file:
+      - .env
+    environment:
+      - PORT=5002
+      - BOT_API_TOKEN=${WECHAT_BOT_TOKEN:-dev-token-change-me}
+      - WECHANNEL_STATE_DIR=/data/wechannel
+    volumes:
+      - ./wechat-bot:/app:ro
+      - wechannel-data:/data/wechannel
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:5002/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    # 注意：微信扫码登录需要在浏览器里看二维码。
+    # 如果是远程 NAS，请把 5002 端口通过 VPN 或内网穿透暴露出来，
+    # 或改用 WebSocket + VNC 的方式在浏览器里渲染二维码。
+
+volumes:
+  wechannel-data:
