@@ -102,7 +102,7 @@ pytest tests/ -v
 | 主服务（Flask :5001） | `ghcr.io/adminmtan/yuming` |
 | 微信推送服务（Node :5002） | `ghcr.io/adminmtan/yuming-bot` |
 
-> ⚠️ **当前状态**：此 PR 合并后，CI 才会真正开始往 GHCR 推送。在那之前请用 `docker compose build` 本地构建。
+镜像由 CI 在每次 push 到 `main` 时自动构建并推送，已在 GHCR 公开可用。
 
 ## 已知限制
 
