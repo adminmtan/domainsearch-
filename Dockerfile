@@ -14,8 +14,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
-# 创建非 root 用户提升安全性
-RUN groupadd -r appuser && useradd -r -g appuser appuser
+# 创建非 root 用户并指定 home 目录（gunicorn 需要可写的 HOME，否则启动时 Permission denied）
+RUN groupadd -r appuser && useradd -r -g appuser -m -d /home/appuser appuser
+ENV HOME=/home/appuser
 
 WORKDIR /app
 
