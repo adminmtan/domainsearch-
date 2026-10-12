@@ -22,7 +22,11 @@ WORKDIR /app
 
 # 先复制依赖文件，利用层缓存
 COPY requirements.txt ./
-RUN pip install --no-cache-dir -r requirements.txt
+# 2026-10-13: 强制刷新 pip install 层（CACHE_BUST=2026-10-13-v1），
+# 并在 build 时 assertion gunicorn 存在，失败会直接 build fail（不再让"装好了"假阳性推到 GHCR）
+ARG CACHE_BUST=2026-10-13-v1
+RUN pip install --no-cache-dir -r requirements.txt && \
+    python -c "import shutil; assert shutil.which('gunicorn'), 'gunicorn missing after pip install'; print('gunicorn OK at:', shutil.which('gunicorn'))"
 
 # 复制应用代码
 COPY . .
