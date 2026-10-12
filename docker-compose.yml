@@ -1,5 +1,3 @@
-version: "3.8"
-
 # 智能域名生成器 + 微信推送服务（NAS / 家庭服务器部署）
 #
 # 架构：
@@ -7,10 +5,13 @@ version: "3.8"
 #   Bot   :5002  -> 微信扫码登录 + 消息推送（Node.js + wechat-channel）
 #
 # 用法：
-#   1) cp .env.example .env 并填入 OPENAI_API_KEY 等
-#   2) mkdir -p data/wechannel  # 微信登录状态持久化目录
+#   1) cp .env.example .env 并填入 OPENAI_API_KEY / WECHAT_BOT_TOKEN
+#   2) docker compose pull   (拉预构建镜像)
+#      或 docker compose build (本地构建)
 #   3) docker compose up -d
 #   4) 访问 http://<NAS-IP>:5001
+#
+# 完整部署文档：docs/deploy/nas-docker.md
 
 services:
   yuming:
@@ -29,6 +30,10 @@ services:
     depends_on:
       yuming-bot:
         condition: service_started
+    # 可选：挂 docker.sock 让 web 端"在线更新"按钮可用
+    # ⚠️  挂 docker.sock = 给容器 root 等价权限，只在你信任镜像时挂
+    # volumes:
+    #   - /var/run/docker.sock:/var/run/docker.sock:ro
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request, sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:5001/').status == 200 else 1)"]
       interval: 30s
@@ -45,6 +50,7 @@ services:
     build:
       context: ./wechat-bot
       dockerfile: Dockerfile
+    image: ghcr.io/adminmtan/yuming-bot:latest
     container_name: yuming-bot
     restart: unless-stopped
     working_dir: /app
@@ -57,7 +63,7 @@ services:
       - BOT_API_TOKEN=${WECHAT_BOT_TOKEN:-dev-token-change-me}
       - WECHANNEL_STATE_DIR=/data/wechannel
     volumes:
-      - ./wechat-bot:/app:ro
+      # 微信登录状态持久化（必须）
       - wechannel-data:/data/wechannel
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://127.0.0.1:5002/health"]
@@ -71,8 +77,9 @@ services:
         max-size: "10m"
         max-file: "3"
     # 注意：微信扫码登录需要在浏览器里看二维码。
-    # 如果是远程 NAS，请把 5002 端口通过 VPN 或内网穿透暴露出来，
-    # 或改用 WebSocket + VNC 的方式在浏览器里渲染二维码。
+    # 如果是远程 NAS，请把 5002 端口通过 VPN 或内网穿透暴露出来（扫码时短暂开放即可），
+    # 扫完码后建议关闭公网访问。
+    # 完整方案见 docs/deploy/nas-docker.md#微信扫码远程访问方案
 
 volumes:
   wechannel-data:

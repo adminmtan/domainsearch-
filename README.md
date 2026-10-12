@@ -68,10 +68,16 @@ python3 app.py
 ├── app.py              # Flask 主服务（路由、参数校验）
 ├── generator.py        # OpenAI 域名生成器（Prompt + JSON 解析）
 ├── checker.py          # dmcheck.app API 客户端（含超时降级）
+├── updater.py          # 在线更新（容器内自动 compose pull + up -d）
 ├── static/             # 前端（index.html / style.css / app.js）
 ├── tests/              # pytest 测试
 ├── requirements.txt
+├── Dockerfile          # 主服务镜像（多架构 linux/amd64+arm64）
+├── docker-compose.yml  # 完整部署编排（yuming + yuming-bot 两个服务）
+├── wechat-bot/         # 微信推送服务（Node.js + wechat-channel）
 └── docs/
+    ├── deploy/
+    │   └── nas-docker.md       # NAS / 家庭服务器完整部署手册
     └── superpowers/
         ├── specs/2026-10-07-smart-domain-generator-design.md
         └── plans/2026-10-07-smart-domain-generator.md
@@ -85,60 +91,18 @@ pytest tests/ -v
 
 ## NAS / 家庭服务器部署（Docker）
 
-镜像已自动构建并推送到 GitHub Container Registry：
+完整部署手册（含前置要求、首次部署、升级回滚、微信扫码远程方案、常见问题、备份迁移）见：
+
+**[`docs/deploy/nas-docker.md`](docs/deploy/nas-docker.md)**
+
+快速预览：项目提供两个镜像，自动构建并推送到 GitHub Container Registry（CI 配在 `.github/workflows/`）：
 
 | 镜像 | 地址 |
 | --- | --- |
-| 主服务（Flask :5001） | `ghcr.io/adminmtan/yuming:latest` |
-| 微信推送服务（Node :5002） | `ghcr.io/adminmtan/yuming-bot:latest` |
+| 主服务（Flask :5001） | `ghcr.io/adminmtan/yuming` |
+| 微信推送服务（Node :5002） | `ghcr.io/adminmtan/yuming-bot` |
 
-### 拉取 + 启动
-
-```bash
-# 1) 克隆本仓库（或仅下载 docker-compose.yml + .env.example）
-git clone https://github.com/adminmtan/domainsearch-.git
-cd domainsearch-
-
-# 2) 填入真实环境变量
-cp .env.example .env
-$EDITOR .env   # 必填 OPENAI_API_KEY
-
-# 3) 拉取镜像并启动
-docker compose pull
-docker compose up -d
-
-# 4) 查看状态
-docker compose ps
-docker compose logs -f yuming
-```
-
-访问 `http://<NAS-IP>:5001/` 即可。
-
-### 镜像标签说明
-
-每次 push 到 `main` 都会自动构建并打以下标签：
-
-- `latest` — main 分支最新构建
-- `main` — main 分支的 ref 标签
-- `sha-xxxxxxx` — 提交 hash 短码
-- `v1.2.3` / `1.2` — 推送 tag（`git tag v1.2.3 && git push --tags`）时生成
-
-固定到某个版本：
-
-```bash
-# 拉取指定 commit
-docker pull ghcr.io/adminmtan/yuming:sha-283d89e
-
-# 或在 docker-compose.yml 改 image: ...:sha-283d89e 后 docker compose up -d
-```
-
-### 手动触发 CI 重新构建
-
-GitHub 仓库 → Actions → CI → Run workflow，可不依赖 push 触发一次构建。
-
-### 平台支持
-
-镜像以 `linux/amd64,linux/arm64` 多架构构建，主流 NAS（群晖/威联通/极空间 x86 和 arm64 设备）均可直接拉取。
+> ⚠️ **当前状态**：此 PR 合并后，CI 才会真正开始往 GHCR 推送。在那之前请用 `docker compose build` 本地构建。
 
 ## 已知限制
 
