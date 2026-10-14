@@ -18,6 +18,12 @@ const PORT = Number(process.env.PORT || 5002);
 const STATE_DIR = process.env.WECHANNEL_STATE_DIR || '/data/wechannel';
 const API_TOKEN = process.env.BOT_API_TOKEN || '';
 
+// 自动重连配置
+const RECONNECT_DELAY_MS = 30_000;      // 检测到掉线后，等待多久开始重连
+const RECONNECT_INTERVAL_MS = 60_000;   // 重连失败后，多久再试一次
+const MAX_RECONNECT_ATTEMPTS = 0;       // 0 表示无限重试（直到成功或手动 logout）
+const HEALTH_CHECK_INTERVAL_MS = 60_000; // 健康检查间隔（检测静默掉线）
+
 const app = express();
 app.use(cors());
 app.use(express.json({ limit: '64kb' }));
@@ -32,7 +38,12 @@ function auth(req, res, next) {
 }
 app.use(auth);
 
-// --- 内存状态 ---
+// --- 重连状态 ---
+let reconnectAttempts = 0;
+let reconnectTimer = null;
+let healthCheckTimer = null;
+let isReconnecting = false;           // 防止重复重连
+let lastConnectedAt = null;           // 上次成功连接的时间
 const state = {
   status: 'disconnected', // disconnected | logging_in | connected | session_expired
   qrcode: null,           // legacy, kept for compat
@@ -87,6 +98,18 @@ client.on('session_status', ({ accountId, status }) => {
   state.status = status;
   state.accountId = accountId;
   pushLog(`session_status: ${accountId} -> ${status}`);
+
+  // 监听会话状态变化，触发自动重连
+  if (status === 'session_expired' || status === 'disconnected') {
+    pushLog(`检测到会话掉线 (${status})，${RECONNECT_DELAY_MS / 1000}s 后开始自动重连...`);
+    scheduleReconnect(RECONNECT_DELAY_MS);
+  }
+
+  if (status === 'connected') {
+    lastConnectedAt = Date.now();
+    reconnectAttempts = 0;
+    pushLog(`连接恢复成功`);
+  }
 });
 
 client.on('login', (account) => {
@@ -95,14 +118,153 @@ client.on('login', (account) => {
   state.qrcodeUrl = null;
   state.connectedAt = Date.now();
   state.awaitingFirstMessage = true; // 还没收到过消息，等对方发第一条
+  lastConnectedAt = Date.now();
+  reconnectAttempts = 0;
   pushLog(`登录成功: ${account.id}，等待第一条消息`);
 });
 
 client.on('error', (err) => {
   pushLog(`client error: ${err.message}`);
+  // client.error 通常是 receiver 内部错误，可能导致掉线
+  // 触发快速重连检查
+  if (client.isReceiving(state.accountId) === false && state.accountId) {
+    pushLog(`检测到接收器异常退出，${RECONNECT_DELAY_MS / 1000}s 后尝试重连...`);
+    scheduleReconnect(RECONNECT_DELAY_MS);
+  }
 });
 
 await client.init();
+
+// --- 自动重连逻辑 ---
+
+/**
+ * 安排重连任务（防抖：避免重复安排）
+ */
+function scheduleReconnect(delayMs = RECONNECT_DELAY_MS) {
+  // 如果正在重连或已经安排了重连，不再重复安排
+  if (isReconnecting || reconnectTimer) {
+    pushLog(`重连已在安排中，跳过此次调度`);
+    return;
+  }
+
+  // 如果当前是 logged_in 状态（扫码登录中），不触发重连
+  if (state.status === 'logging_in') {
+    pushLog(`当前正在扫码登录中，暂不触发重连`);
+    return;
+  }
+
+  reconnectTimer = setTimeout(() => {
+    reconnectTimer = null;
+    attemptReconnect();
+  }, delayMs);
+  pushLog(`已安排 ${delayMs / 1000}s 后执行重连`);
+}
+
+/**
+ * 执行重连尝试
+ */
+async function attemptReconnect() {
+  // 防止重复重连
+  if (isReconnecting) {
+    pushLog(`重连进行中，跳过`);
+    return;
+  }
+
+  // 检查是否已连接
+  if (state.status === 'connected' && client.isReceiving(state.accountId)) {
+    pushLog(`当前已是 connected 状态，无需重连`);
+    return;
+  }
+
+  // 检查是否有可用的账户
+  const accounts = client.getAccounts();
+  const configuredAccount = accounts.find(acc => acc.configured);
+
+  if (!configuredAccount) {
+    pushLog(`没有已配置的账户，无法自动重连（请先扫码登录）`);
+    return;
+  }
+
+  isReconnecting = true;
+  reconnectAttempts++;
+  state.status = 'reconnecting';
+  pushLog(`开始重连... (第 ${reconnectAttempts} 次尝试)`);
+
+  try {
+    // 先停止旧的 receiver（如果存在）
+    if (state.accountId) {
+      try {
+        await client.stop(state.accountId);
+      } catch (e) {
+        // 忽略停止错误
+      }
+    }
+
+    // 重新启动 receiver
+    await client.start(configuredAccount.id);
+    state.accountId = configuredAccount.id;
+
+    // 检查会话状态
+    const sess = client.getSessionStatus(configuredAccount.id);
+    if (sess.status === 'connected') {
+      state.status = 'connected';
+      lastConnectedAt = Date.now();
+      reconnectAttempts = 0;
+      pushLog(`✅ 重连成功！账户 ${configuredAccount.id} 已恢复连接`);
+    } else if (sess.status === 'session_expired') {
+      // 会话已过期，需要重新扫码
+      state.status = 'session_expired';
+      pushLog(`⚠️ 会话已过期，需要重新扫码登录`);
+      // 等待一段时间后再试（session_expired 通常需要人工介入）
+      scheduleReconnect(RECONNECT_INTERVAL_MS);
+    } else {
+      // 其他状态，尝试继续
+      state.status = sess.status;
+      pushLog(`重连完成，当前状态: ${sess.status}`);
+    }
+  } catch (err) {
+    pushLog(`❌ 重连失败: ${err.message}`);
+    state.status = 'disconnected';
+
+    // 检查是否达到最大重试次数
+    if (MAX_RECONNECT_ATTEMPTS > 0 && reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
+      pushLog(`已达到最大重试次数 (${MAX_RECONNECT_ATTEMPTS})，停止自动重连`);
+      return;
+    }
+
+    // 安排下次重连
+    scheduleReconnect(RECONNECT_INTERVAL_MS);
+  } finally {
+    isReconnecting = false;
+  }
+}
+
+/**
+ * 健康检查：定期检查连接状态
+ * 防止静默掉线（session_status 事件没有触发的情况）
+ */
+function startHealthCheck() {
+  if (healthCheckTimer) return;
+
+  healthCheckTimer = setInterval(async () => {
+    // 只在应该连接但没有连接时检查
+    if (state.status !== 'disconnected' && state.status !== 'session_expired') {
+      return;
+    }
+
+    const accounts = client.getAccounts();
+    const configuredAccount = accounts.find(acc => acc.configured);
+    if (!configuredAccount) return;
+
+    // 检查 receiver 是否真的在运行
+    const isReceiving = client.isReceiving(configuredAccount.id);
+    if (!isReceiving) {
+      pushLog(`健康检查: receiver 未运行，触发重连`);
+      scheduleReconnect(5_000); // 快速重连
+    }
+  }, HEALTH_CHECK_INTERVAL_MS);
+  pushLog(`健康检查已启动 (间隔 ${HEALTH_CHECK_INTERVAL_MS / 1000}s)`);
+}
 
 async function startIfLoggedIn() {
   // 如果 stateDir 里已有持久化的账户，直接 start
@@ -113,11 +275,25 @@ async function startIfLoggedIn() {
         await client.start(acc.id);
         state.accountId = acc.id;
         const sess = client.getSessionStatus(acc.id);
-        if (sess === 'connected') state.status = 'connected';
-        pushLog(`从持久化恢复账户 ${acc.id}, session=${sess}`);
+        if (sess.status === 'connected') {
+          state.status = 'connected';
+          lastConnectedAt = Date.now();
+        } else if (sess.status === 'session_expired') {
+          state.status = 'session_expired';
+          // 已登录但会话过期，触发自动重连
+          pushLog(`检测到已保存账户的会话已过期，将自动尝试重新登录...`);
+          scheduleReconnect(RECONNECT_DELAY_MS);
+        } else {
+          state.status = sess.status;
+        }
+        pushLog(`从持久化恢复账户 ${acc.id}, session=${sess.status}`);
+        // 启动健康检查
+        startHealthCheck();
         return;
       } catch (e) {
         pushLog(`恢复失败: ${e.message}`);
+        // 启动失败也触发重连
+        scheduleReconnect(RECONNECT_DELAY_MS);
       }
     }
   }
@@ -159,6 +335,13 @@ function parseLatestQrcodeUrl() {
 async function performLogin() {
   state.status = 'logging_in';
   state.qrcodeUrl = null;
+
+  // 取消待执行的重连任务（用户主动登录）
+  if (reconnectTimer) {
+    clearTimeout(reconnectTimer);
+    reconnectTimer = null;
+  }
+
   // 周期轮询 logs 抓 QR url（client.login 是同步等，不暴露 url 出来）
   const qrWatcher = setInterval(() => {
     const url = parseLatestQrcodeUrl();
@@ -171,7 +354,10 @@ async function performLogin() {
       state.status = 'connected';
       state.qrcodeUrl = null;
       await client.start(result.account.id);
+      reconnectAttempts = 0;
       pushLog(`登录成功: ${result.account.id}`);
+      // 登录成功后启动健康检查
+      startHealthCheck();
       return;
     }
     state.status = 'disconnected';
@@ -197,11 +383,19 @@ app.post('/login', (req, res) => {
 app.post('/logout', async (req, res) => {
   if (!state.accountId) return res.json({ ok: true });
   try {
+    // 取消待执行的重连任务
+    if (reconnectTimer) {
+      clearTimeout(reconnectTimer);
+      reconnectTimer = null;
+      pushLog(`已取消待执行的重连任务`);
+    }
+
     await client.stop(state.accountId);
     await client.logout(state.accountId);
     state.status = 'disconnected';
     state.accountId = null;
     state.contacts.clear();
+    reconnectAttempts = 0;
     return res.json({ ok: true });
   } catch (e) {
     return res.status(500).json({ ok: false, error: e.message });
@@ -242,6 +436,17 @@ app.listen(PORT, '0.0.0.0', () => {
 // 优雅退出
 process.on('SIGTERM', async () => {
   pushLog('SIGTERM, shutting down...');
+
+  // 清理定时器
+  if (reconnectTimer) {
+    clearTimeout(reconnectTimer);
+    reconnectTimer = null;
+  }
+  if (healthCheckTimer) {
+    clearInterval(healthCheckTimer);
+    healthCheckTimer = null;
+  }
+
   await client.close();
   process.exit(0);
 });

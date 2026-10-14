@@ -322,9 +322,28 @@ sudo systemctl restart docker
 
 或者改 `docker-compose.yml` 的 `image:` 字段，从 `ghcr.io` 换成你 push 过的镜像仓库。
 
-### Q6: 微信扫码后立刻掉线
+### Q6: 微信掉线了怎么办？
 
-**A**: `wechat-channel` 客户端有反风控策略，**头 24 小时只能给"24h 内给你发过消息的人"推**。这不是 bug，是微信限制。
+**A**: 现在服务已内置**自动重连机制**，掉线后会自动尝试恢复：
+
+1. **检测到掉线后 30 秒**自动开始重连
+2. **重连失败后每 60 秒**继续重试
+3. **无限重试**直到成功或你手动 logout
+4. **健康检查**：每 60 秒检查一次 receiver 是否正常运行
+
+查看重连日志：
+```bash
+docker compose logs -f yuming-bot | grep -E "(重连|掉线|connected|session_expired)"
+```
+
+**如果会话彻底过期（session_expired）**：需要重新扫码登录：
+```bash
+curl -X POST http://localhost:5002/login \
+  -H "X-Bot-Token: your-token"
+# 然后访问 http://localhost:5002/ 扫码
+```
+
+**关于 24h 限制**：`wechat-channel` 客户端有反风控策略，**头 24 小时只能给"24h 内给你发过消息的人"推**。这不是 bug，是微信限制。
 
 ### Q7: 数据会不会丢？
 
